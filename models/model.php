@@ -14,9 +14,12 @@ class EasyVisualMcpModel {
             'wp_create_user','wp_update_user',
             'wp_upload_image_from_url',
             'wp_activate_plugin','wp_deactivate_plugin',
+            'wp_install_plugin','wp_install_theme',
+            'wp_switch_theme',
             'wp_update_option','wp_delete_option',
             'wp_update_post_meta','wp_delete_post_meta',
-            'wp_create_term','wp_delete_term'
+            'wp_create_term','wp_delete_term',
+            'wp_create_nav_menu','wp_add_nav_menu_item','wp_update_nav_menu_item','wp_delete_nav_menu_item','wp_delete_nav_menu'
         );
 
         // Lectura sensible (requiere permisos elevados o toca red externa)
@@ -332,6 +335,39 @@ class EasyVisualMcpModel {
                         'required' => array('file'),
                     ),
                 ),
+                'wp_install_plugin' => array(
+                    'name' => 'wp_install_plugin',
+                    'description' => 'Install a plugin from a public URL (ZIP file). Requires appropriate permissions.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'url' => array('type' => 'string'),
+                        ),
+                        'required' => array('url'),
+                    ),
+                ),
+                'wp_install_theme' => array(
+                    'name' => 'wp_install_theme',
+                    'description' => 'Install a theme from a public URL (ZIP file). Requires appropriate permissions.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'url' => array('type' => 'string'),
+                        ),
+                        'required' => array('url'),
+                    ),
+                ),
+                'wp_switch_theme' => array(
+                    'name' => 'wp_switch_theme',
+                    'description' => 'Activate (switch to) a theme by stylesheet slug (requires appropriate permissions).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'stylesheet' => array('type' => 'string'),
+                        ),
+                        'required' => array('stylesheet'),
+                    ),
+                ),
                 'wp_get_themes' => array(
                     'name' => 'wp_get_themes',
                     'description' => 'List installed themes.',
@@ -385,6 +421,80 @@ class EasyVisualMcpModel {
                             'taxonomy' => array('type' => 'string'),
                         ),
                         'required' => array('term_id','taxonomy'),
+                    ),
+                ),
+
+                // Menús de navegación
+                'wp_get_nav_menus' => array(
+                    'name' => 'wp_get_nav_menus',
+                    'description' => 'List all navigation menus.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => (object) array(),
+                        'required' => array(),
+                    ),
+                ),
+                'wp_create_nav_menu' => array(
+                    'name' => 'wp_create_nav_menu',
+                    'description' => 'Create a new navigation menu. Requires menu_name.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'menu_name' => array('type' => 'string'),
+                        ),
+                        'required' => array('menu_name'),
+                    ),
+                ),
+                'wp_add_nav_menu_item' => array(
+                    'name' => 'wp_add_nav_menu_item',
+                    'description' => 'Add an item to a navigation menu. Requires menu_id, menu_item_title, menu_item_type (post_type, custom, taxonomy), menu_item_object (page, post, category, etc.), menu_item_object_id.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'menu_id' => array('type' => 'integer'),
+                            'menu_item_title' => array('type' => 'string'),
+                            'menu_item_type' => array('type' => 'string'),
+                            'menu_item_object' => array('type' => 'string'),
+                            'menu_item_object_id' => array('type' => 'integer'),
+                            'menu_item_url' => array('type' => 'string'),
+                            'menu_item_parent_id' => array('type' => 'integer'),
+                        ),
+                        'required' => array('menu_id', 'menu_item_title', 'menu_item_type'),
+                    ),
+                ),
+                'wp_update_nav_menu_item' => array(
+                    'name' => 'wp_update_nav_menu_item',
+                    'description' => 'Update a navigation menu item. Requires menu_id, menu_item_id, and fields object.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'menu_id' => array('type' => 'integer'),
+                            'menu_item_id' => array('type' => 'integer'),
+                            'fields' => array('type' => 'object'),
+                        ),
+                        'required' => array('menu_id', 'menu_item_id'),
+                    ),
+                ),
+                'wp_delete_nav_menu_item' => array(
+                    'name' => 'wp_delete_nav_menu_item',
+                    'description' => 'Delete a navigation menu item by menu_item_id.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'menu_item_id' => array('type' => 'integer'),
+                        ),
+                        'required' => array('menu_item_id'),
+                    ),
+                ),
+                'wp_delete_nav_menu' => array(
+                    'name' => 'wp_delete_nav_menu',
+                    'description' => 'Delete a navigation menu by menu_id.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'menu_id' => array('type' => 'integer'),
+                        ),
+                        'required' => array('menu_id'),
                     ),
                 ),
 
@@ -591,6 +701,9 @@ class EasyVisualMcpModel {
             // plugins/themes
             'wp_activate_plugin' => 'activate_plugins',
             'wp_deactivate_plugin' => 'activate_plugins',
+            'wp_install_plugin' => 'install_plugins',
+            'wp_install_theme' => 'install_themes',
+            'wp_switch_theme' => 'switch_themes',
             // options/meta
             'wp_update_option' => 'manage_options',
             'wp_delete_option' => 'manage_options',
@@ -599,574 +712,741 @@ class EasyVisualMcpModel {
             // terms
             'wp_create_term' => 'manage_categories',
             'wp_delete_term' => 'manage_categories',
+            // menús
+            'wp_create_nav_menu' => 'edit_theme_options',
+            'wp_add_nav_menu_item' => 'edit_theme_options',
+            'wp_update_nav_menu_item' => 'edit_theme_options',
+            'wp_delete_nav_menu_item' => 'edit_theme_options',
+            'wp_delete_nav_menu' => 'edit_theme_options',
         );
         return isset($map[$tool]) ? $map[$tool] : null;
     }
-	
-	public function dispatchTool($tool, $args, $id = null) {
-		$r = array('jsonrpc' => '2.0', 'id' => $id);
-		$utils = 'EasyVisualMcpUtils';
-		$frame = class_exists('EasyVisualMcpFrame') ? EasyVisualMcpFrame::_() : null;
-		$addResultText = function(array &$r, string $text) {
-			if (!isset($r['result']['content'])) {
-				$r['result']['content'] = [];
-			}
-			$r['result']['content'][] = array('type' => 'text', 'text' => $text);
-		};
-		$cleanHtml = function($v) { return wp_kses_post( wp_unslash( $v ) ); };
-		$postExcerpt = function($p) {
-			return wp_trim_words( wp_strip_all_tags( isset($p->post_excerpt) && !empty($p->post_excerpt) ? $p->post_excerpt : $p->post_content ), 55 );
-		};
 
-		// Validate args against tool schema (basic) before dispatching
-		$tools_map = $this->getTools();
-		if (isset($tools_map[$tool]) && !empty($tools_map[$tool]['inputSchema'])) {
-			$schema = $tools_map[$tool]['inputSchema'];
-			$errMsg = '';
-			if (!$this->validateArgumentsSchema($schema, is_array($args) ? $args : array(), $errMsg)) {
-				$r['error'] = array('code' => -42602, 'message' => 'Invalid arguments: ' . $errMsg);
-				return $r;
-			}
-		}
-		// --- INICIO LÓGICA DE DISPATCH ADAPTADA ---
-		// Enforce capability mapping for mutating tools (centralized)
-		$required_cap = $this->getToolCapability($tool);
-		if (!empty($required_cap) && !current_user_can($required_cap)) {
-			return array('jsonrpc' => '2.0', 'id' => $id, 'error' => array('code' => 'permission_denied', 'message' => 'Insufficient permissions to execute ' . $tool . '. Required capability: ' . $required_cap));
-		}
-		switch ($tool) {
-			case 'mcp_ping':
-				$pingData = array(
-					'time' => gmdate('Y-m-d H:i:s'),
-					'name' => get_bloginfo('name'),
-				);
-				$addResultText($r, 'Ping successful: ' . wp_json_encode($pingData, JSON_PRETTY_PRINT));
-				break;
-			case 'wp_get_posts':
-				$q = array(
-					'post_type' => sanitize_key($utils::getArrayValue($args, 'post_type', 'post')),
-					'post_status' => sanitize_key($utils::getArrayValue($args, 'post_status', 'publish')),
-					's' => sanitize_text_field($utils::getArrayValue($args, 'search')),
-					'posts_per_page' => max(1, intval($utils::getArrayValue($args, 'limit', 10, 1))),
-				);
-				if (isset($args['offset'])) {
-					$q['offset'] = max(0, intval($args['offset']));
-				}
-				if (isset($args['paged'])) {
-					$q['paged'] = max(1, intval($args['paged']));
-				}
-				$date = array();
-				if (!empty($args['after'])) {
-					$date['after'] = $args['after'];
-				}
-				if (!empty($args['before'])) {
-					$date['before'] = $args['before'];
-				}
-				if ($date) {
-					$q['date_query'] = array($date);
-				}
-				$rows = array();
-				foreach (get_posts($q) as $p) {
-					$rows[] = array(
-						'ID' => $p->ID,
-						'post_title' => $p->post_title,
-						'post_status' => $p->post_status,
-						'post_excerpt' => $postExcerpt($p),
-						'permalink' => get_permalink($p),
-					);
-				}
-				$addResultText($r, wp_json_encode($rows, JSON_PRETTY_PRINT));
-				break;
-			case 'wp_get_post':
-				if (empty($args['ID'])) {
-					$r['error'] = array('code' => -42602, 'message' => 'ID required');
-					break;
-				}
-				$p = get_post(intval($args['ID']));
-				if (!$p) {
-					$r['error'] = array('code' => -42600, 'message' => 'Post not found');
-					break;
-				}
-				$out = array(
-					'ID' => $p->ID,
-					'post_title' => $p->post_title,
-					'post_status' => $p->post_status,
-					'post_content' => $cleanHtml($p->post_content),
-					'post_excerpt' => $postExcerpt($p),
-					'permalink' => get_permalink($p),
-					'post_date' => $p->post_date,
-					'post_modified' => $p->post_modified,
-				);
-				$addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
-				break;
-			case 'wp_create_post':
-				if (empty($args['post_title'])) {
-					$r['error'] = array('code' => -42602, 'message' => 'post_title required');
-					break;
-				}
-				$ins = array(
-					'post_title' => sanitize_text_field($args['post_title']),
-					'post_status' => sanitize_key($utils::getArrayValue($args, 'post_status', 'draft')),
-					'post_type' => sanitize_key($utils::getArrayValue($args, 'post_type', 'post')),
-				);
-				if (!empty($args['post_content'])) {
-					$ins['post_content'] = $args['post_content']; // Markdown a HTML si lo necesitas
-				}
-				if (!empty($args['post_excerpt'])) {
-					$ins['post_excerpt'] = $cleanHtml($args['post_excerpt']);
-				}
-				if (!empty($args['post_name'])) {
-					$ins['post_name'] = sanitize_title($args['post_name']);
-				}
-				if (!empty($args['meta_input']) && is_array($args['meta_input'])) {
-					$ins['meta_input'] = $args['meta_input'];
-				}
-				$new = wp_insert_post($ins, true);
-				if (is_wp_error($new)) {
-					$r['error'] = array('code' => $new->get_error_code(), 'message' => $new->get_error_message());
-				} else {
-					if (empty($ins['meta_input']) && !empty($args['meta_input']) && is_array($args['meta_input'])) {
-						foreach ($args['meta_input'] as $k => $v) {
-							update_post_meta($new, sanitize_key($k), maybe_serialize($v));
-						}
-					}
-					$addResultText($r, 'Post created ID ' . $new);
-				}
-				break;
-			case 'wp_update_post':
-				if (empty($args['ID'])) {
-					$r['error'] = array('code' => -42602, 'message' => 'ID required');
-					break;
-				}
-				$c = array('ID' => intval($args['ID']));
-				if (!empty($args['fields']) && is_array($args['fields'])) {
-					foreach ($args['fields'] as $k => $v) {
-						$c[$k] = in_array($k, array('post_content', 'post_excerpt'), true) ? $cleanHtml($v) : sanitize_text_field($v);
-					}
-				}
-				$u = ( count($c) > 1 ) ? wp_update_post($c, true) : $c['ID'];
-				if (is_wp_error($u)) {
-					$r['error'] = array('code' => $u->get_error_code(), 'message' => $u->get_error_message());
-					break;
-				}
-				if (!empty($args['meta_input']) && is_array($args['meta_input'])) {
-					foreach ($args['meta_input'] as $k => $v) {
-						update_post_meta($u, sanitize_key($k), maybe_serialize($v));
-					}
-				}
-				$addResultText($r, 'Post #' . $u . ' updated');
-				break;
-			case 'wp_delete_post':
-				if (empty($args['ID'])) {
-					$r['error'] = array('code' => -42602, 'message' => 'ID required');
-					break;
-				}
-				$del = wp_delete_post(intval($args['ID']), !empty($args['force']));
-				if ($del) {
-					$addResultText($r, 'Post #' . $args['ID'] . ' deleted');
-				} else {
-					$r['error'] = array('code' => -42603, 'message' => 'Deletion failed');
-				}
-				break;
-			case 'wp_get_comments':
-				$cargs = array(
-					'post_id' => $utils::getArrayValue($args, 'post_id', 0, 1),
-					'status' => $utils::getArrayValue($args, 'status', 'approve'),
-					'search' => $utils::getArrayValue($args, 'search'),
-					'number' => max(1, $utils::getArrayValue($args, 'limit', 10, 1)),
-				);
-				if (isset($args['offset'])) {
-					$cargs['offset'] = max(0, intval($args['offset']));
-				}
-				if (isset($args['paged'])) {
-					$cargs['paged'] = max(1, intval($args['paged']));
-				}
-				$list = array();
-				foreach (get_comments($cargs) as $c) {
-					$list[] = array(
-						'comment_ID' => $c->comment_ID,
-						'comment_post_ID' => $c->comment_post_ID,
-						'comment_author' => $c->comment_author,
-						'comment_content' => wp_trim_words(wp_strip_all_tags($c->comment_content), 40),
-						'comment_date' => $c->comment_date,
-						'comment_approved' => $c->comment_approved,
-					);
-				}
-				$addResultText($r, wp_json_encode($list, JSON_PRETTY_PRINT));
-				break;
-			case 'wp_create_comment':
-				if (empty($args['post_id']) || empty($args['comment_content'])) {
-					$r['error'] = array('code' => -42602, 'message' => 'post_id & comment_content required');
-					break;
-				}
-				$ins = array(
-					'comment_post_ID' => intval($args['post_id']),
-					'comment_content' => $cleanHtml($args['comment_content']),
-					'comment_author' => sanitize_text_field($utils::getArrayValue($args, 'comment_author')),
-					'comment_author_email' => sanitize_email($utils::getArrayValue($args, 'comment_author_email')),
-					'comment_author_url' => esc_url_raw($utils::getArrayValue($args, 'comment_author_url')),
-					'comment_approved' => $utils::getArrayValue($args, 'comment_approved', 1),
-				);
-				$cid = wp_insert_comment($ins);
+    public function dispatchTool($tool, $args, $id = null) {
+        $r = array('jsonrpc' => '2.0', 'id' => $id);
+        $utils = 'EasyVisualMcpUtils';
+        $frame = class_exists('EasyVisualMcpFrame') ? EasyVisualMcpFrame::_() : null;
+        $addResultText = function(array &$r, string $text) {
+            if (!isset($r['result']['content'])) {
+                $r['result']['content'] = [];
+            }
+            $r['result']['content'][] = array('type' => 'text', 'text' => $text);
+        };
+        $cleanHtml = function($v) { return wp_kses_post( wp_unslash( $v ) ); };
+        $postExcerpt = function($p) {
+            return wp_trim_words( wp_strip_all_tags( isset($p->post_excerpt) && !empty($p->post_excerpt) ? $p->post_excerpt : $p->post_content ), 55 );
+        };
 
-				if (is_wp_error($cid)) {
-					$r['error'] = array(
-						'code' => $cid instanceof WP_Error ? $cid->get_error_code() : -1,
-						'message' => $cid instanceof WP_Error ? $cid->get_error_message() : 'Unknown error occurred.'
-					);
-				} elseif ($cid === false) {
-					$r['error'] = array(
-						'code' => -1,
-						'message' => 'Unknown error occurred while creating the comment.'
-					);
-				} elseif (is_int($cid)) {
-					$addResultText($r, 'Comment created successfully with ID ' . $cid);
-				} else {
-					$r['error'] = array(
-						'code' => -1,
-						'message' => 'Unexpected return type from wp_insert_comment.'
-					);
-				}
-				break;
-			case 'wp_update_comment':
-				if (empty($args['comment_ID'])) {
-					$r['error'] = array('code' => -42602, 'message' => 'comment_ID required');
-					break;
-				}
-				$c = array('comment_ID' => intval($args['comment_ID']));
-				if (!empty($args['fields']) && is_array($args['fields'])) {
-					foreach ($args['fields'] as $k => $v) {
-						$c[$k] = ( 'comment_content' === $k ) ? $cleanHtml($v) : sanitize_text_field($v);
-					}
-				}
-				$cid = wp_update_comment($c, true);
-				if (is_wp_error($cid)) {
-					$r['error'] = array('code' => $cid->get_error_code(), 'message' => $cid->get_error_message());
-				} else {
-					$addResultText($r, 'Comment #' . $cid . ' updated');
-				}
-				break;
-			case 'wp_delete_comment':
-				if (empty($args['comment_ID'])) {
-					$r['error'] = array('code' => -42602, 'message' => 'comment_ID required');
-					break;
-				}
-				$done = wp_delete_comment(intval($args['comment_ID']), !empty($args['force']));
-				if ($done) {
-					$addResultText($r, 'Comment #' . $args['comment_ID'] . ' deleted');
-				} else {
-					$r['error'] = array('code' => -42603, 'message' => 'Deletion failed');
-				}
-				break;
-			case 'wp_get_users':
-				$q = array(
-					'search' => '*' . esc_attr($utils::getArrayValue($args, 'search')) . '*',
-					'role' => $utils::getArrayValue($args, 'role'),
-					'number' => max(1, intval($utils::getArrayValue($args, 'limit', 10, 1))),
-				);
-				if (isset($args['offset'])) {
-					$q['offset'] = max(0, intval($args['offset']));
-				}
-				if (isset($args['paged'])) {
-					$q['paged'] = max(1, intval($args['paged']));
-				}
-				$rows = array();
-				foreach (get_users($q) as $u) {
-					$rows[] = array(
-						'ID' => $u->ID,
-						'user_login' => $u->user_login,
-						'display_name' => $u->display_name,
-						'roles' => $u->roles,
-					);
-				}
-				$addResultText($r, wp_json_encode($rows, JSON_PRETTY_PRINT));
-				break;
-			case 'wp_create_user':
-				$data = array(
-					'user_login' => sanitize_user($args['user_login']),
-					'user_email' => sanitize_email($args['user_email']),
-					'user_pass' => $utils::getArrayValue($args, 'user_pass', wp_generate_password(12, true)),
-					'display_name' => sanitize_text_field($utils::getArrayValue($args, 'display_name')),
-					'role' => sanitize_key($utils::getArrayValue($args, 'role', get_option('default_role', 'subscriber'))),
-				);
-				$uid = wp_insert_user($data);
-				if (is_wp_error($uid)) {
-					$r['error'] = array('code' => $uid->get_error_code(), 'message' => $uid->get_error_message());
-				} else {
-					$addResultText($r, 'User created ID ' . $uid);
-				}
-				break;
-			case 'wp_update_user':
-				if (empty($args['ID'])) {
-					$r['error'] = array('code' => -42602, 'message' => 'ID required');
-					break;
-				}
-				$upd = array('ID' => intval($args['ID']));
-				if (!empty($args['fields']) && is_array($args['fields'])) {
-					foreach ($args['fields'] as $k => $v) {
-						$upd[ $k ] = ( 'role' === $k ) ? sanitize_key($v) : sanitize_text_field($v);
-					}
-				}
-				$u = wp_update_user($upd);
-				if (is_wp_error($u)) {
-					$r['error'] = array('code' => $u->get_error_code(), 'message' => $u->get_error_message());
-				} else {
-					$addResultText($r, 'User #' . $u . ' updated');
-				}
-				break;
-				case 'wp_list_plugins':
-					if (!function_exists('get_plugins')) {
-						require_once ABSPATH . 'wp-admin/includes/plugin.php';
-					}
-					$all = get_plugins();
-					$rows = array();
-					foreach ($all as $file => $meta) {
-						$rows[] = array('file' => $file, 'Name' => $meta['Name'] ?? '', 'Version' => $meta['Version'] ?? '', 'active' => is_plugin_active($file));
-					}
-					$addResultText($r, wp_json_encode($rows, JSON_PRETTY_PRINT));
-					break;
-
-				case 'wp_activate_plugin':
-					if (empty($args['file'])) {
-						$r['error'] = array('code' => -42602, 'message' => 'file parameter required');
-						break;
-					}
-					if (!current_user_can('activate_plugins')) {
-						$r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions');
-						break;
-					}
-					require_once ABSPATH . 'wp-admin/includes/plugin.php';
-					$resp = activate_plugin(sanitize_text_field($args['file']));
-					if (is_wp_error($resp)) {
-						$r['error'] = array('code' => $resp->get_error_code(), 'message' => $resp->get_error_message());
-					} else {
-						$addResultText($r, 'Plugin activated: ' . $args['file']);
-					}
-					break;
-
-				case 'wp_deactivate_plugin':
-					if (empty($args['file'])) {
-						$r['error'] = array('code' => -42602, 'message' => 'file parameter required');
-						break;
-					}
-					if (!current_user_can('activate_plugins')) {
-						$r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions');
-						break;
-					}
-					deactivate_plugins(sanitize_text_field($args['file']));
-					$addResultText($r, 'Plugin deactivated: ' . $args['file']);
-					break;
-
-				case 'wp_get_themes':
-					$themes = wp_get_themes();
-					$out = array();
-					foreach ($themes as $slug => $theme) {
-						$out[] = array('slug' => $slug, 'Name' => $theme->get('Name'), 'Version' => $theme->get('Version'));
-					}
-					$addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
-					break;
-
-				case 'wp_get_media':
-					$q = array('post_type' => 'attachment', 'posts_per_page' => max(1, intval($utils::getArrayValue($args, 'limit', 20, 1))));
-					if (isset($args['offset'])) { $q['offset'] = max(0, intval($args['offset'])); }
-					$rows = array();
-					foreach (get_posts($q) as $a) {
-						$rows[] = array('ID' => $a->ID, 'post_title' => $a->post_title, 'mime_type' => get_post_mime_type($a), 'url' => wp_get_attachment_url($a->ID));
-					}
-					$addResultText($r, wp_json_encode($rows, JSON_PRETTY_PRINT));
-					break;
-
-				case 'wp_get_media_item':
-					if (empty($args['ID'])) { $r['error'] = array('code' => -42602, 'message' => 'ID required'); break; }
-					$att = get_post(intval($args['ID']));
-					if (!$att || 'attachment' !== $att->post_type) { $r['error'] = array('code' => -42600, 'message' => 'Media not found'); break; }
-					$meta = wp_get_attachment_metadata($att->ID);
-					$out = array('ID' => $att->ID, 'post_title' => $att->post_title, 'mime_type' => get_post_mime_type($att), 'url' => wp_get_attachment_url($att->ID), 'meta' => $meta);
-					$addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
-					break;
-				case 'wp_upload_image_from_url':
-					$url = esc_url_raw($utils::getArrayValue($args, 'url'));
-					if (!$url) { $r['error'] = array('code' => -42602, 'message' => 'url required'); break; }
-					if (!current_user_can('upload_files')) { $r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions to upload files'); break; }
-					require_once ABSPATH . 'wp-admin/includes/file.php';
-					require_once ABSPATH . 'wp-admin/includes/media.php';
-					require_once ABSPATH . 'wp-admin/includes/image.php';
-					$tmp = download_url($url);
-					if (is_wp_error($tmp)) { $r['error'] = array('code' => 'download_error', 'message' => $tmp->get_error_message()); break; }
-					$file = array();
-					$file['name'] = wp_basename($url);
-					$file['tmp_name'] = $tmp;
-					$att_id = media_handle_sideload($file, 0);
-					if (is_wp_error($att_id)) { @unlink($file['tmp_name']); $r['error'] = array('code' => 'sideload_error', 'message' => $att_id->get_error_message()); break; }
-					   $att_url = wp_get_attachment_url($att_id);
-					   $addResultText($r, 'Imagen subida correctamente. ID: ' . $att_id . ', URL: ' . $att_url);
-					   return $r;
-
-				case 'wp_get_taxonomies':
-					$tax = get_taxonomies(array(), 'objects');
-					$out = array();
-					foreach ($tax as $k => $o) { $out[] = array('name' => $k, 'label' => $o->label); }
-					$addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
-					break;
-
-				case 'wp_get_terms':
-					$taxonomy = sanitize_text_field($utils::getArrayValue($args, 'taxonomy'));
-					if (!$taxonomy) { $r['error'] = array('code' => -42602, 'message' => 'taxonomy required'); break; }
-					$terms = get_terms(array('taxonomy' => $taxonomy, 'hide_empty' => false));
-					$out = array();
-					foreach ($terms as $t) { $out[] = array('term_id' => $t->term_id, 'name' => $t->name, 'slug' => $t->slug, 'count' => $t->count); }
-					$addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
-					break;
-
-				case 'wp_create_term':
-					$taxonomy = sanitize_text_field($utils::getArrayValue($args, 'taxonomy'));
-					$name = sanitize_text_field($utils::getArrayValue($args, 'name'));
-					if (!$taxonomy || !$name) { $r['error'] = array('code' => -42602, 'message' => 'taxonomy & name required'); break; }
-					$res = wp_insert_term($name, $taxonomy);
-					if (is_wp_error($res)) { $r['error'] = array('code' => $res->get_error_code(), 'message' => $res->get_error_message()); } else { $addResultText($r, 'Term created: ' . json_encode($res)); }
-					break;
-
-				case 'wp_delete_term':
-					$term_id = intval($utils::getArrayValue($args, 'term_id'));
-					$taxonomy = sanitize_text_field($utils::getArrayValue($args, 'taxonomy'));
-					if (!$term_id || !$taxonomy) { $r['error'] = array('code' => -42602, 'message' => 'term_id & taxonomy required'); break; }
-					$done = wp_delete_term($term_id, $taxonomy);
-					if (is_wp_error($done)) { $r['error'] = array('code' => $done->get_error_code(), 'message' => $done->get_error_message()); } else { $addResultText($r, 'Term deleted'); }
-					break;
-
-				case 'search':
-					// simple search wrapper (posts)
-					$s = sanitize_text_field($utils::getArrayValue($args, 'q', $utils::getArrayValue($args, 'query', '')));
-					$limit = max(1, intval($utils::getArrayValue($args, 'limit', 10, 1)));
-					$q = new WP_Query(array('s' => $s, 'posts_per_page' => $limit));
-					$out = array();
-					foreach ($q->posts as $p) { $out[] = array('ID' => $p->ID, 'post_title' => $p->post_title, 'excerpt' => $postExcerpt($p), 'permalink' => get_permalink($p)); }
-					$addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
-					break;
-
-				case 'fetch':
-					$url = esc_url_raw($utils::getArrayValue($args, 'url'));
-					if (!$url) { $r['error'] = array('code' => -42602, 'message' => 'url required'); break; }
-					$method = strtoupper($utils::getArrayValue($args, 'method', 'GET'));
-					$opts = array();
-					if (!empty($args['headers']) && is_array($args['headers'])) { $opts['headers'] = $args['headers']; }
-					if (!empty($args['body'])) { $opts['body'] = $args['body']; }
-					if ('GET' === $method) { $resp = wp_remote_get($url, $opts); } else { $resp = wp_remote_request($url, array_merge($opts, array('method' => $method))); }
-					if (is_wp_error($resp)) { $r['error'] = array('code' => 'fetch_error', 'message' => $resp->get_error_message()); break; }
-					   $code = wp_remote_retrieve_response_code($resp);
-					   $body = wp_remote_retrieve_body($resp);
-					   $maxlen = 2000;
-					   $body_short = (strlen($body) > $maxlen) ? substr($body, 0, $maxlen) . "... [truncated]" : $body;
-					   $addResultText($r, "Fetch status: $code\n" . $body_short);
-					   return $r;
-
-			   case 'wp_get_post_meta':
-				   if (!current_user_can('manage_options')) {
-					   $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para manipular meta.');
-					   return $r;
-				   }
-				   $post_id = isset($args['post_id']) ? intval($args['post_id']) : 0;
-				   $meta_key = isset($args['meta_key']) ? sanitize_text_field($args['meta_key']) : '';
-				   if (!$post_id || !$meta_key) {
-					   $r['error'] = array('code' => 'invalid_params', 'message' => 'Faltan parámetros.');
-					   return $r;
-				   }
-				   $single = isset($args['single']) ? (bool)$args['single'] : true;
-				   $value = get_post_meta($post_id, $meta_key, $single);
-				   $addResultText($r, 'Valor de meta (' . $meta_key . ') para post ' . $post_id . ': ' . var_export($value, true));
-				   return $r;
-			   case 'wp_update_post_meta':
-				   if (!current_user_can('manage_options')) {
-					   $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para manipular meta.');
-					   return $r;
-				   }
-				   $post_id = isset($args['post_id']) ? intval($args['post_id']) : 0;
-				   $meta_key = isset($args['meta_key']) ? sanitize_text_field($args['meta_key']) : '';
-				   $meta_value = isset($args['meta_value']) ? maybe_serialize($args['meta_value']) : null;
-				   if (!$post_id || !$meta_key) {
-					   $r['error'] = array('code' => 'invalid_params', 'message' => 'Faltan parámetros.');
-					   return $r;
-				   }
-				   $updated = update_post_meta($post_id, $meta_key, $meta_value);
-				   if ($updated) {
-					   $addResultText($r, 'Meta creado/actualizado para post ' . $post_id . ' (' . $meta_key . ')');
-				   } else {
-					   $addResultText($r, 'No se pudo crear/actualizar el metadato para post ' . $post_id . ' (' . $meta_key . ')');
-				   }
-				   return $r;
-			   case 'wp_delete_post_meta':
-				   if (!current_user_can('manage_options')) {
-					   $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para manipular meta.');
-					   return $r;
-				   }
-				   $post_id = isset($args['post_id']) ? intval($args['post_id']) : 0;
-				   $meta_key = isset($args['meta_key']) ? sanitize_text_field($args['meta_key']) : '';
-				   $meta_value = isset($args['meta_value']) ? $args['meta_value'] : null;
-				   if (!$post_id || !$meta_key) {
-					   $r['error'] = array('code' => 'invalid_params', 'message' => 'Faltan parámetros.');
-					   return $r;
-				   }
-				   $deleted = delete_post_meta($post_id, $meta_key, $meta_value);
-				   if ($deleted) {
-					   $addResultText($r, 'Metadato (' . $meta_key . ') eliminado para post ' . $post_id);
-				   } else {
-					   $addResultText($r, 'No se eliminó el metadato (' . $meta_key . ') para post ' . $post_id);
-				   }
-				   return $r;
-			   case 'wp_get_option':
-				   if (!current_user_can('manage_options')) {
-					   $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para manipular opciones.');
-					   return $r;
-				   }
-				   $option = isset($args['option']) ? sanitize_text_field($args['option']) : '';
-				   if (!$option) {
-					   $r['error'] = array('code' => 'invalid_params', 'message' => 'Falta el parámetro option.');
-					   return $r;
-				   }
-				   $val = get_option($option);
-				   $addResultText($r, 'Valor de opción (' . $option . '): ' . var_export($val, true));
-				   return $r;
-			   case 'wp_update_option':
-				   if (!current_user_can('manage_options')) {
-					   $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para manipular opciones.');
-					   return $r;
-				   }
-				   $option = isset($args['option']) ? sanitize_text_field($args['option']) : '';
-				   $value = isset($args['value']) ? $args['value'] : null;
-				   if (!$option) {
-					   $r['error'] = array('code' => 'invalid_params', 'message' => 'Falta el parámetro option.');
-					   return $r;
-				   }
-				   $old_val = get_option($option, null);
-				   $updated = update_option($option, $value);
-				   if ($updated) {
-					   $addResultText($r, 'Opción (' . $option . ') actualizada correctamente.');
-				   } else if ($old_val === $value) {
-					   $addResultText($r, 'La opción (' . $option . ') ya tenía ese valor, no se modificó.');
-				   } else {
-					   $addResultText($r, 'No se pudo actualizar la opción (' . $option . ').');
-				   }
-				   return $r;
-			   case 'wp_delete_option':
-				   if (!current_user_can('manage_options')) {
-					   $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para manipular opciones.');
-					   return $r;
-				   }
-				   $option = isset($args['option']) ? sanitize_text_field($args['option']) : '';
-				   if (!$option) {
-					   $r['error'] = array('code' => 'invalid_params', 'message' => 'Falta el parámetro option.');
-					   return $r;
-				   }
-				   $deleted = delete_option($option);
-				   if ($deleted) {
-					   $addResultText($r, 'Opción (' . $option . ') eliminada');
-				   } else {
-					   $addResultText($r, 'No se eliminó la opción (' . $option . ')');
-				   }
-				   return $r;
-			   default:
-				   $r['error'] = array('code' => -42609, 'message' => 'Unknown tool');
-	   }
-		return $r;
-	}
+        // Validate args against tool schema (basic) before dispatching
+        $tools_map = $this->getTools();
+        if (isset($tools_map[$tool]) && !empty($tools_map[$tool]['inputSchema'])) {
+            $schema = $tools_map[$tool]['inputSchema'];
+            $errMsg = '';
+            if (!$this->validateArgumentsSchema($schema, is_array($args) ? $args : array(), $errMsg)) {
+                $r['error'] = array('code' => -42602, 'message' => 'Invalid arguments: ' . $errMsg);
+                return $r;
+            }
+        }
+        // --- INICIO LÓGICA DE DISPATCH ADAPTADA ---
+        // Enforce capability mapping for mutating tools (centralized)
+        $required_cap = $this->getToolCapability($tool);
+        if (!empty($required_cap) && !current_user_can($required_cap)) {
+            return array('jsonrpc' => '2.0', 'id' => $id, 'error' => array('code' => 'permission_denied', 'message' => 'Insufficient permissions to execute ' . $tool . '. Required capability: ' . $required_cap));
+        }
+        switch ($tool) {
+            case 'mcp_ping':
+                $pingData = array(
+                    'time' => gmdate('Y-m-d H:i:s'),
+                    'name' => get_bloginfo('name'),
+                );
+                $addResultText($r, 'Ping successful: ' . wp_json_encode($pingData, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_get_posts':
+                $q = array(
+                    'post_type' => sanitize_key($utils::getArrayValue($args, 'post_type', 'post')),
+                    'post_status' => sanitize_key($utils::getArrayValue($args, 'post_status', 'publish')),
+                    's' => sanitize_text_field($utils::getArrayValue($args, 'search')),
+                    'posts_per_page' => max(1, intval($utils::getArrayValue($args, 'limit', 10, 1))),
+                );
+                if (isset($args['offset'])) {
+                    $q['offset'] = max(0, intval($args['offset']));
+                }
+                if (isset($args['paged'])) {
+                    $q['paged'] = max(1, intval($args['paged']));
+                }
+                $date = array();
+                if (!empty($args['after'])) {
+                    $date['after'] = $args['after'];
+                }
+                if (!empty($args['before'])) {
+                    $date['before'] = $args['before'];
+                }
+                if ($date) {
+                    $q['date_query'] = array($date);
+                }
+                $rows = array();
+                foreach (get_posts($q) as $p) {
+                    $rows[] = array(
+                        'ID' => $p->ID,
+                        'post_title' => $p->post_title,
+                        'post_status' => $p->post_status,
+                        'post_excerpt' => $postExcerpt($p),
+                        'permalink' => get_permalink($p),
+                    );
+                }
+                $addResultText($r, wp_json_encode($rows, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_get_post':
+                if (empty($args['ID'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'ID required');
+                    break;
+                }
+                $p = get_post(intval($args['ID']));
+                if (!$p) {
+                    $r['error'] = array('code' => -42600, 'message' => 'Post not found');
+                    break;
+                }
+                $out = array(
+                    'ID' => $p->ID,
+                    'post_title' => $p->post_title,
+                    'post_status' => $p->post_status,
+                    'post_content' => $cleanHtml($p->post_content),
+                    'post_excerpt' => $postExcerpt($p),
+                    'permalink' => get_permalink($p),
+                    'post_date' => $p->post_date,
+                    'post_modified' => $p->post_modified,
+                );
+                $addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_create_post':
+                if (empty($args['post_title'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'post_title required');
+                    break;
+                }
+                $ins = array(
+                    'post_title' => sanitize_text_field($args['post_title']),
+                    'post_status' => sanitize_key($utils::getArrayValue($args, 'post_status', 'draft')),
+                    'post_type' => sanitize_key($utils::getArrayValue($args, 'post_type', 'post')),
+                );
+                if (!empty($args['post_content'])) {
+                    $ins['post_content'] = $args['post_content'];
+                }
+                if (!empty($args['post_excerpt'])) {
+                    $ins['post_excerpt'] = $cleanHtml($args['post_excerpt']);
+                }
+                if (!empty($args['post_name'])) {
+                    $ins['post_name'] = sanitize_title($args['post_name']);
+                }
+                if (!empty($args['meta_input']) && is_array($args['meta_input'])) {
+                    $ins['meta_input'] = $args['meta_input'];
+                }
+                $new = wp_insert_post($ins, true);
+                if (is_wp_error($new)) {
+                    $r['error'] = array('code' => $new->get_error_code(), 'message' => $new->get_error_message());
+                } else {
+                    if (empty($ins['meta_input']) && !empty($args['meta_input']) && is_array($args['meta_input'])) {
+                        foreach ($args['meta_input'] as $k => $v) {
+                            update_post_meta($new, sanitize_key($k), maybe_serialize($v));
+                        }
+                    }
+                    $addResultText($r, 'Post created ID ' . $new);
+                }
+                break;
+            case 'wp_update_post':
+                if (empty($args['ID'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'ID required');
+                    break;
+                }
+                $c = array('ID' => intval($args['ID']));
+                if (!empty($args['fields']) && is_array($args['fields'])) {
+                    foreach ($args['fields'] as $k => $v) {
+                        $c[$k] = in_array($k, array('post_content', 'post_excerpt'), true) ? $cleanHtml($v) : sanitize_text_field($v);
+                    }
+                }
+                $u = ( count($c) > 1 ) ? wp_update_post($c, true) : $c['ID'];
+                if (is_wp_error($u)) {
+                    $r['error'] = array('code' => $u->get_error_code(), 'message' => $u->get_error_message());
+                    break;
+                }
+                if (!empty($args['meta_input']) && is_array($args['meta_input'])) {
+                    foreach ($args['meta_input'] as $k => $v) {
+                        update_post_meta($u, sanitize_key($k), maybe_serialize($v));
+                    }
+                }
+                $addResultText($r, 'Post #' . $u . ' updated');
+                break;
+            case 'wp_delete_post':
+                if (empty($args['ID'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'ID required');
+                    break;
+                }
+                $del = wp_delete_post(intval($args['ID']), !empty($args['force']));
+                if ($del) {
+                    $addResultText($r, 'Post #' . $args['ID'] . ' deleted');
+                } else {
+                    $r['error'] = array('code' => -42603, 'message' => 'Deletion failed');
+                }
+                break;
+            case 'wp_get_comments':
+                $cargs = array(
+                    'post_id' => $utils::getArrayValue($args, 'post_id', 0, 1),
+                    'status' => $utils::getArrayValue($args, 'status', 'approve'),
+                    'search' => $utils::getArrayValue($args, 'search'),
+                    'number' => max(1, $utils::getArrayValue($args, 'limit', 10, 1)),
+                );
+                if (isset($args['offset'])) {
+                    $cargs['offset'] = max(0, intval($args['offset']));
+                }
+                if (isset($args['paged'])) {
+                    $cargs['paged'] = max(1, intval($args['paged']));
+                }
+                $list = array();
+                foreach (get_comments($cargs) as $c) {
+                    $list[] = array(
+                        'comment_ID' => $c->comment_ID,
+                        'comment_post_ID' => $c->comment_post_ID,
+                        'comment_author' => $c->comment_author,
+                        'comment_content' => wp_trim_words(wp_strip_all_tags($c->comment_content), 40),
+                        'comment_date' => $c->comment_date,
+                        'comment_approved' => $c->comment_approved,
+                    );
+                }
+                $addResultText($r, wp_json_encode($list, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_create_comment':
+                if (empty($args['post_id']) || empty($args['comment_content'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'post_id & comment_content required');
+                    break;
+                }
+                $ins = array(
+                    'comment_post_ID' => intval($args['post_id']),
+                    'comment_content' => $cleanHtml($args['comment_content']),
+                    'comment_author' => sanitize_text_field($utils::getArrayValue($args, 'comment_author')),
+                    'comment_author_email' => sanitize_email($utils::getArrayValue($args, 'comment_author_email')),
+                    'comment_author_url' => esc_url_raw($utils::getArrayValue($args, 'comment_author_url')),
+                    'comment_approved' => $utils::getArrayValue($args, 'comment_approved', 1),
+                );
+                $cid = wp_insert_comment($ins);
+                if (is_wp_error($cid)) {
+                    $r['error'] = array(
+                        'code' => $cid instanceof WP_Error ? $cid->get_error_code() : -1,
+                        'message' => $cid instanceof WP_Error ? $cid->get_error_message() : 'Unknown error occurred.'
+                    );
+                } elseif ($cid === false) {
+                    $r['error'] = array(
+                        'code' => -1,
+                        'message' => 'Unknown error occurred while creating the comment.'
+                    );
+                } elseif (is_int($cid)) {
+                    $addResultText($r, 'Comment created successfully with ID ' . $cid);
+                } else {
+                    $r['error'] = array(
+                        'code' => -1,
+                        'message' => 'Unexpected return type from wp_insert_comment.'
+                    );
+                }
+                break;
+            case 'wp_update_comment':
+                if (empty($args['comment_ID'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'comment_ID required');
+                    break;
+                }
+                $c = array('comment_ID' => intval($args['comment_ID']));
+                if (!empty($args['fields']) && is_array($args['fields'])) {
+                    foreach ($args['fields'] as $k => $v) {
+                        $c[$k] = ( 'comment_content' === $k ) ? $cleanHtml($v) : sanitize_text_field($v);
+                    }
+                }
+                $cid = wp_update_comment($c, true);
+                if (is_wp_error($cid)) {
+                    $r['error'] = array('code' => $cid->get_error_code(), 'message' => $cid->get_error_message());
+                } else {
+                    $addResultText($r, 'Comment #' . $cid . ' updated');
+                }
+                break;
+            case 'wp_delete_comment':
+                if (empty($args['comment_ID'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'comment_ID required');
+                    break;
+                }
+                $done = wp_delete_comment(intval($args['comment_ID']), !empty($args['force']));
+                if ($done) {
+                    $addResultText($r, 'Comment #' . $args['comment_ID'] . ' deleted');
+                } else {
+                    $r['error'] = array('code' => -42603, 'message' => 'Deletion failed');
+                }
+                break;
+            case 'wp_get_users':
+                $q = array(
+                    'search' => '*' . esc_attr($utils::getArrayValue($args, 'search')) . '*',
+                    'role' => $utils::getArrayValue($args, 'role'),
+                    'number' => max(1, intval($utils::getArrayValue($args, 'limit', 10, 1))),
+                );
+                if (isset($args['offset'])) {
+                    $q['offset'] = max(0, intval($args['offset']));
+                }
+                if (isset($args['paged'])) {
+                    $q['paged'] = max(1, intval($args['paged']));
+                }
+                $rows = array();
+                foreach (get_users($q) as $u) {
+                    $rows[] = array(
+                        'ID' => $u->ID,
+                        'user_login' => $u->user_login,
+                        'display_name' => $u->display_name,
+                        'roles' => $u->roles,
+                    );
+                }
+                $addResultText($r, wp_json_encode($rows, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_create_user':
+                $data = array(
+                    'user_login' => sanitize_user($args['user_login']),
+                    'user_email' => sanitize_email($args['user_email']),
+                    'user_pass' => $utils::getArrayValue($args, 'user_pass', wp_generate_password(12, true)),
+                    'display_name' => sanitize_text_field($utils::getArrayValue($args, 'display_name')),
+                    'role' => sanitize_key($utils::getArrayValue($args, 'role', get_option('default_role', 'subscriber'))),
+                );
+                $uid = wp_insert_user($data);
+                if (is_wp_error($uid)) {
+                    $r['error'] = array('code' => $uid->get_error_code(), 'message' => $uid->get_error_message());
+                } else {
+                    $addResultText($r, 'User created ID ' . $uid);
+                }
+                break;
+            case 'wp_update_user':
+                if (empty($args['ID'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'ID required');
+                    break;
+                }
+                $upd = array('ID' => intval($args['ID']));
+                if (!empty($args['fields']) && is_array($args['fields'])) {
+                    foreach ($args['fields'] as $k => $v) {
+                        $upd[$k] = ( 'role' === $k ) ? sanitize_key($v) : sanitize_text_field($v);
+                    }
+                }
+                $u = wp_update_user($upd);
+                if (is_wp_error($u)) {
+                    $r['error'] = array('code' => $u->get_error_code(), 'message' => $u->get_error_message());
+                } else {
+                    $addResultText($r, 'User #' . $u . ' updated');
+                }
+                break;
+            case 'wp_list_plugins':
+                if (!function_exists('get_plugins')) {
+                    require_once ABSPATH . 'wp-admin/includes/plugin.php';
+                }
+                $all = get_plugins();
+                $rows = array();
+                foreach ($all as $file => $meta) {
+                    $rows[] = array('file' => $file, 'Name' => $meta['Name'] ?? '', 'Version' => $meta['Version'] ?? '', 'active' => is_plugin_active($file));
+                }
+                $addResultText($r, wp_json_encode($rows, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_activate_plugin':
+                if (empty($args['file'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'file parameter required');
+                    break;
+                }
+                if (!current_user_can('activate_plugins')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions');
+                    break;
+                }
+                require_once ABSPATH . 'wp-admin/includes/plugin.php';
+                $resp = activate_plugin(sanitize_text_field($args['file']));
+                if (is_wp_error($resp)) {
+                    $r['error'] = array('code' => $resp->get_error_code(), 'message' => $resp->get_error_message());
+                } else {
+                    $addResultText($r, 'Plugin activated: ' . $args['file']);
+                }
+                break;
+            case 'wp_deactivate_plugin':
+                if (empty($args['file'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'file parameter required');
+                    break;
+                }
+                if (!current_user_can('activate_plugins')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions');
+                    break;
+                }
+                deactivate_plugins(sanitize_text_field($args['file']));
+                $addResultText($r, 'Plugin deactivated: ' . $args['file']);
+                break;
+            case 'wp_install_plugin':
+                if (empty($args['url'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'url parameter required');
+                    break;
+                }
+                if (!current_user_can('install_plugins')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions to install plugins');
+                    break;
+                }
+                // Incluir dependencias necesarias
+                require_once ABSPATH . 'wp-admin/includes/file.php';
+                require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
+                require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+                
+                // Inicializar WP_Filesystem
+                if (!function_exists('request_filesystem_credentials')) {
+                    $r['error'] = array('code' => -42604, 'message' => 'Filesystem credentials function not available');
+                    break;
+                }
+                $creds = request_filesystem_credentials('', '', false, false, null);
+                if (!$creds) {
+                    $r['error'] = array('code' => -42605, 'message' => 'Filesystem credentials required');
+                    break;
+                }
+                if (!WP_Filesystem($creds)) {
+                    $r['error'] = array('code' => -42606, 'message' => 'Failed to initialize filesystem');
+                    break;
+                }
+                
+                $upgrader = new Plugin_Upgrader();
+                $result = $upgrader->install($args['url']);
+                if (is_wp_error($result)) {
+                    $r['error'] = array('code' => $result->get_error_code(), 'message' => $result->get_error_message());
+                } else {
+                    $addResultText($r, 'Plugin installed successfully from ' . $args['url']);
+                }
+                break;
+            case 'wp_install_theme':
+                if (empty($args['url'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'url parameter required');
+                    break;
+                }
+                if (!current_user_can('install_themes')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions to install themes');
+                    break;
+                }
+                // Incluir dependencias necesarias
+                require_once ABSPATH . 'wp-admin/includes/file.php';
+                require_once ABSPATH . 'wp-admin/includes/theme-install.php';
+                require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
+                
+                // Inicializar WP_Filesystem
+                if (!function_exists('request_filesystem_credentials')) {
+                    $r['error'] = array('code' => -42604, 'message' => 'Filesystem credentials function not available');
+                    break;
+                }
+                $creds = request_filesystem_credentials('', '', false, false, null);
+                if (!$creds) {
+                    $r['error'] = array('code' => -42605, 'message' => 'Filesystem credentials required');
+                    break;
+                }
+                if (!WP_Filesystem($creds)) {
+                    $r['error'] = array('code' => -42606, 'message' => 'Failed to initialize filesystem');
+                    break;
+                }
+                
+                $upgrader = new Theme_Upgrader();
+                $result = $upgrader->install($args['url']);
+                if (is_wp_error($result)) {
+                    $r['error'] = array('code' => $result->get_error_code(), 'message' => $result->get_error_message());
+                } else {
+                    $addResultText($r, 'Theme installed successfully from ' . $args['url']);
+                }
+                break;
+            case 'wp_switch_theme':
+                if (empty($args['stylesheet'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'stylesheet parameter required');
+                    break;
+                }
+                if (!current_user_can('switch_themes')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions to switch themes');
+                    break;
+                }
+                $stylesheet = sanitize_text_field($args['stylesheet']);
+                $themes = wp_get_themes();
+                if (!isset($themes[$stylesheet])) {
+                    $r['error'] = array('code' => -42600, 'message' => 'Theme not found');
+                    break;
+                }
+                switch_theme($stylesheet);
+                $addResultText($r, 'Theme switched to ' . $stylesheet);
+                break;
+            case 'wp_get_themes':
+                $themes = wp_get_themes();
+                $out = array();
+                foreach ($themes as $slug => $theme) {
+                    $out[] = array('slug' => $slug, 'Name' => $theme->get('Name'), 'Version' => $theme->get('Version'));
+                }
+                $addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_get_media':
+                $q = array('post_type' => 'attachment', 'posts_per_page' => max(1, intval($utils::getArrayValue($args, 'limit', 20, 1))));
+                if (isset($args['offset'])) { $q['offset'] = max(0, intval($args['offset'])); }
+                $rows = array();
+                foreach (get_posts($q) as $a) {
+                    $rows[] = array('ID' => $a->ID, 'post_title' => $a->post_title, 'mime_type' => get_post_mime_type($a), 'url' => wp_get_attachment_url($a->ID));
+                }
+                $addResultText($r, wp_json_encode($rows, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_get_media_item':
+                if (empty($args['ID'])) { $r['error'] = array('code' => -42602, 'message' => 'ID required'); break; }
+                $att = get_post(intval($args['ID']));
+                if (!$att || 'attachment' !== $att->post_type) { $r['error'] = array('code' => -42600, 'message' => 'Media not found'); break; }
+                $meta = wp_get_attachment_metadata($att->ID);
+                $out = array('ID' => $att->ID, 'post_title' => $att->post_title, 'mime_type' => get_post_mime_type($att), 'url' => wp_get_attachment_url($att->ID), 'meta' => $meta);
+                $addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_upload_image_from_url':
+                $url = esc_url_raw($utils::getArrayValue($args, 'url'));
+                if (!$url) { $r['error'] = array('code' => -42602, 'message' => 'url required'); break; }
+                if (!current_user_can('upload_files')) { $r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions to upload files'); break; }
+                require_once ABSPATH . 'wp-admin/includes/file.php';
+                require_once ABSPATH . 'wp-admin/includes/media.php';
+                require_once ABSPATH . 'wp-admin/includes/image.php';
+                $tmp = download_url($url);
+                if (is_wp_error($tmp)) { $r['error'] = array('code' => 'download_error', 'message' => $tmp->get_error_message()); break; }
+                $file = array();
+                $file['name'] = wp_basename($url);
+                $file['tmp_name'] = $tmp;
+                $att_id = media_handle_sideload($file, 0);
+                if (is_wp_error($att_id)) { @unlink($file['tmp_name']); $r['error'] = array('code' => 'sideload_error', 'message' => $att_id->get_error_message()); break; }
+                $att_url = wp_get_attachment_url($att_id);
+                $addResultText($r, 'Imagen subida correctamente. ID: ' . $att_id . ', URL: ' . $att_url);
+                break;
+            case 'wp_get_taxonomies':
+                $tax = get_taxonomies(array(), 'objects');
+                $out = array();
+                foreach ($tax as $k => $o) { $out[] = array('name' => $k, 'label' => $o->label); }
+                $addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_get_terms':
+                $taxonomy = sanitize_text_field($utils::getArrayValue($args, 'taxonomy'));
+                if (!$taxonomy) { $r['error'] = array('code' => -42602, 'message' => 'taxonomy required'); break; }
+                $terms = get_terms(array('taxonomy' => $taxonomy, 'hide_empty' => false));
+                $out = array();
+                foreach ($terms as $t) { $out[] = array('term_id' => $t->term_id, 'name' => $t->name, 'slug' => $t->slug, 'count' => $t->count); }
+                $addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_create_term':
+                $taxonomy = sanitize_text_field($utils::getArrayValue($args, 'taxonomy'));
+                $name = sanitize_text_field($utils::getArrayValue($args, 'name'));
+                if (!$taxonomy || !$name) { $r['error'] = array('code' => -42602, 'message' => 'taxonomy & name required'); break; }
+                $res = wp_insert_term($name, $taxonomy);
+                if (is_wp_error($res)) { $r['error'] = array('code' => $res->get_error_code(), 'message' => $res->get_error_message()); } else { $addResultText($r, 'Term created: ' . json_encode($res)); }
+                break;
+            case 'wp_delete_term':
+                $term_id = intval($utils::getArrayValue($args, 'term_id'));
+                $taxonomy = sanitize_text_field($utils::getArrayValue($args, 'taxonomy'));
+                if (!$term_id || !$taxonomy) { $r['error'] = array('code' => -42602, 'message' => 'term_id & taxonomy required'); break; }
+                $done = wp_delete_term($term_id, $taxonomy);
+                if (is_wp_error($done)) { $r['error'] = array('code' => $done->get_error_code(), 'message' => $done->get_error_message()); } else { $addResultText($r, 'Term deleted'); }
+                break;
+            case 'wp_get_nav_menus':
+                $menus = wp_get_nav_menus();
+                $out = array();
+                foreach ($menus as $menu) {
+                    $out[] = array('term_id' => $menu->term_id, 'name' => $menu->name, 'slug' => $menu->slug);
+                }
+                $addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_create_nav_menu':
+                if (empty($args['menu_name'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'menu_name required');
+                    break;
+                }
+                $menu_id = wp_create_nav_menu(sanitize_text_field($args['menu_name']));
+                if (is_wp_error($menu_id)) {
+                    $r['error'] = array('code' => $menu_id->get_error_code(), 'message' => $menu_id->get_error_message());
+                } else {
+                    $addResultText($r, 'Navigation menu created with ID ' . $menu_id);
+                }
+                break;
+            case 'wp_add_nav_menu_item':
+                if (empty($args['menu_id']) || empty($args['menu_item_title']) || empty($args['menu_item_type'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'menu_id, menu_item_title, menu_item_type required');
+                    break;
+                }
+                $item = array(
+                    'menu-item-title' => sanitize_text_field($args['menu_item_title']),
+                    'menu-item-type' => sanitize_key($args['menu_item_type']),
+                    'menu-item-object' => isset($args['menu_item_object']) ? sanitize_key($args['menu_item_object']) : '',
+                    'menu-item-object-id' => isset($args['menu_item_object_id']) ? intval($args['menu_item_object_id']) : 0,
+                    'menu-item-url' => isset($args['menu_item_url']) ? esc_url_raw($args['menu_item_url']) : '',
+                    'menu-item-parent-id' => isset($args['menu_item_parent_id']) ? intval($args['menu_item_parent_id']) : 0,
+                    'menu-item-status' => 'publish',
+                );
+                $item_id = wp_update_nav_menu_item(intval($args['menu_id']), 0, $item);
+                if (is_wp_error($item_id)) {
+                    $r['error'] = array('code' => $item_id->get_error_code(), 'message' => $item_id->get_error_message());
+                } else {
+                    $addResultText($r, 'Menu item added with ID ' . $item_id . ' to menu ' . $args['menu_id']);
+                }
+                break;
+            case 'wp_update_nav_menu_item':
+                if (empty($args['menu_id']) || empty($args['menu_item_id'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'menu_id & menu_item_id required');
+                    break;
+                }
+                $item = array();
+                if (!empty($args['fields']) && is_array($args['fields'])) {
+                    foreach ($args['fields'] as $k => $v) {
+                        $item['menu-item-' . $k] = sanitize_text_field($v);
+                    }
+                }
+                $item_id = wp_update_nav_menu_item(intval($args['menu_id']), intval($args['menu_item_id']), $item);
+                if (is_wp_error($item_id)) {
+                    $r['error'] = array('code' => $item_id->get_error_code(), 'message' => $item_id->get_error_message());
+                } else {
+                    $addResultText($r, 'Menu item #' . $args['menu_item_id'] . ' updated in menu ' . $args['menu_id']);
+                }
+                break;
+            case 'wp_delete_nav_menu_item':
+                if (empty($args['menu_item_id'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'menu_item_id required');
+                    break;
+                }
+                $deleted = wp_delete_post(intval($args['menu_item_id']), true);
+                if ($deleted) {
+                    $addResultText($r, 'Menu item #' . $args['menu_item_id'] . ' deleted');
+                } else {
+                    $r['error'] = array('code' => -42603, 'message' => 'Deletion failed');
+                }
+                break;
+            case 'wp_delete_nav_menu':
+                if (empty($args['menu_id'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'menu_id required');
+                    break;
+                }
+                $deleted = wp_delete_nav_menu(intval($args['menu_id']));
+                if (is_wp_error($deleted)) {
+                    $r['error'] = array('code' => $deleted->get_error_code(), 'message' => $deleted->get_error_message());
+                } else {
+                    $addResultText($r, 'Navigation menu #' . $args['menu_id'] . ' deleted');
+                }
+                break;
+            case 'search':
+                $s = sanitize_text_field($utils::getArrayValue($args, 'q', $utils::getArrayValue($args, 'query', '')));
+                $limit = max(1, intval($utils::getArrayValue($args, 'limit', 10, 1)));
+                $q = new WP_Query(array('s' => $s, 'posts_per_page' => $limit));
+                $out = array();
+                foreach ($q->posts as $p) { $out[] = array('ID' => $p->ID, 'post_title' => $p->post_title, 'excerpt' => $postExcerpt($p), 'permalink' => get_permalink($p)); }
+                $addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
+                break;
+            case 'fetch':
+                $url = esc_url_raw($utils::getArrayValue($args, 'url'));
+                if (!$url) { $r['error'] = array('code' => -42602, 'message' => 'url required'); break; }
+                $method = strtoupper($utils::getArrayValue($args, 'method', 'GET'));
+                $opts = array();
+                if (!empty($args['headers']) && is_array($args['headers'])) { $opts['headers'] = $args['headers']; }
+                if (!empty($args['body'])) { $opts['body'] = $args['body']; }
+                if ('GET' === $method) { $resp = wp_remote_get($url, $opts); } else { $resp = wp_remote_request($url, array_merge($opts, array('method' => $method))); }
+                if (is_wp_error($resp)) { $r['error'] = array('code' => 'fetch_error', 'message' => $resp->get_error_message()); break; }
+                $code = wp_remote_retrieve_response_code($resp);
+                $body = wp_remote_retrieve_body($resp);
+                $maxlen = 2000;
+                $body_short = (strlen($body) > $maxlen) ? substr($body, 0, $maxlen) . "... [truncated]" : $body;
+                $addResultText($r, "Fetch status: $code\n" . $body_short);
+                break;
+            case 'wp_get_post_meta':
+                if (!current_user_can('manage_options')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para manipular meta.');
+                    break;
+                }
+                $post_id = isset($args['post_id']) ? intval($args['post_id']) : 0;
+                $meta_key = isset($args['meta_key']) ? sanitize_text_field($args['meta_key']) : '';
+                if (!$post_id || !$meta_key) {
+                    $r['error'] = array('code' => 'invalid_params', 'message' => 'Faltan parámetros.');
+                    break;
+                }
+                $single = isset($args['single']) ? (bool)$args['single'] : true;
+                $value = get_post_meta($post_id, $meta_key, $single);
+                $addResultText($r, 'Valor de meta (' . $meta_key . ') para post ' . $post_id . ': ' . var_export($value, true));
+                break;
+            case 'wp_update_post_meta':
+                if (!current_user_can('manage_options')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para manipular meta.');
+                    break;
+                }
+                $post_id = isset($args['post_id']) ? intval($args['post_id']) : 0;
+                $meta_key = isset($args['meta_key']) ? sanitize_text_field($args['meta_key']) : '';
+                $meta_value = isset($args['meta_value']) ? maybe_serialize($args['meta_value']) : null;
+                if (!$post_id || !$meta_key) {
+                    $r['error'] = array('code' => 'invalid_params', 'message' => 'Faltan parámetros.');
+                    break;
+                }
+                $updated = update_post_meta($post_id, $meta_key, $meta_value);
+                if ($updated) {
+                    $addResultText($r, 'Meta creado/actualizado para post ' . $post_id . ' (' . $meta_key . ')');
+                } else {
+                    $addResultText($r, 'No se pudo crear/actualizar el metadato para post ' . $post_id . ' (' . $meta_key . ')');
+                }
+                break;
+            case 'wp_delete_post_meta':
+                if (!current_user_can('manage_options')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para manipular meta.');
+                    break;
+                }
+                $post_id = isset($args['post_id']) ? intval($args['post_id']) : 0;
+                $meta_key = isset($args['meta_key']) ? sanitize_text_field($args['meta_key']) : '';
+                $meta_value = isset($args['meta_value']) ? $args['meta_value'] : null;
+                if (!$post_id || !$meta_key) {
+                    $r['error'] = array('code' => 'invalid_params', 'message' => 'Faltan parámetros.');
+                    break;
+                }
+                $deleted = delete_post_meta($post_id, $meta_key, $meta_value);
+                if ($deleted) {
+                    $addResultText($r, 'Metadato (' . $meta_key . ') eliminado para post ' . $post_id);
+                } else {
+                    $addResultText($r, 'No se eliminó el metadato (' . $meta_key . ') para post ' . $post_id);
+                }
+                break;
+            case 'wp_get_option':
+                if (!current_user_can('manage_options')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para manipular opciones.');
+                    break;
+                }
+                $option = isset($args['option']) ? sanitize_text_field($args['option']) : '';
+                if (!$option) {
+                    $r['error'] = array('code' => 'invalid_params', 'message' => 'Falta el parámetro option.');
+                    break;
+                }
+                $val = get_option($option);
+                $addResultText($r, 'Valor de opción (' . $option . '): ' . var_export($val, true));
+                break;
+            case 'wp_update_option':
+                if (!current_user_can('manage_options')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para manipular opciones.');
+                    break;
+                }
+                $option = isset($args['option']) ? sanitize_text_field($args['option']) : '';
+                $value = isset($args['value']) ? $args['value'] : null;
+                if (!$option) {
+                    $r['error'] = array('code' => 'invalid_params', 'message' => 'Falta el parámetro option.');
+                    break;
+                }
+                $old_val = get_option($option, null);
+                $updated = update_option($option, $value);
+                if ($updated) {
+                    $addResultText($r, 'Opción (' . $option . ') actualizada correctamente.');
+                } else if ($old_val === $value) {
+                    $addResultText($r, 'La opción (' . $option . ') ya tenía ese valor, no se modificó.');
+                } else {
+                    $addResultText($r, 'No se pudo actualizar la opción (' . $option . ').');
+                }
+                break;
+            case 'wp_delete_option':
+                if (!current_user_can('manage_options')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para manipular opciones.');
+                    break;
+                }
+                $option = isset($args['option']) ? sanitize_text_field($args['option']) : '';
+                if (!$option) {
+                    $r['error'] = array('code' => 'invalid_params', 'message' => 'Falta el parámetro option.');
+                    break;
+                }
+                $deleted = delete_option($option);
+                if ($deleted) {
+                    $addResultText($r, 'Opción (' . $option . ') eliminada');
+                } else {
+                    $addResultText($r, 'No se eliminó la opción (' . $option . ')');
+                }
+                break;
+            default:
+                $r['error'] = array('code' => -42609, 'message' => 'Unknown tool');
+        }
+        return $r;
+    }
 }
