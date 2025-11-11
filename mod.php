@@ -731,10 +731,7 @@ class EasyVisualMcp {
 		// Enable profile tools
 		if (!empty($profile_tools)) {
 			$placeholders = implode(',', array_fill(0, count($profile_tools), '%s'));
-			$enable_tools_query = sprintf(
-				'UPDATE %s SET enabled = 1 WHERE tool_name IN (' . $placeholders . ')',
-				$tools_table_sql
-			);
+			$enable_tools_query = 'UPDATE ' . $tools_table_sql . ' SET enabled = 1 WHERE tool_name IN (' . $placeholders . ')';
 			$wpdb->query(
 				$wpdb->prepare(
 					$enable_tools_query,
@@ -879,10 +876,7 @@ class EasyVisualMcp {
 		$categories = array();
 		if (!empty($tools)) {
 			$placeholders = implode(',', array_fill(0, count($tools), '%s'));
-			$categories_query = sprintf(
-				'SELECT DISTINCT category FROM %s WHERE tool_name IN (' . $placeholders . ') ORDER BY category',
-				$tools_table_sql
-			);
+			$categories_query = 'SELECT DISTINCT category FROM ' . $tools_table_sql . ' WHERE tool_name IN (' . $placeholders . ') ORDER BY category';
 			$categories = $wpdb->get_col($wpdb->prepare($categories_query, ...$tools));
 		}
 		
@@ -1022,10 +1016,7 @@ class EasyVisualMcp {
 		$system_ids = $wpdb->get_col($wpdb->prepare($system_ids_query, 1));
 		if (!empty($system_ids)) {
 			$placeholders = implode(',', array_fill(0, count($system_ids), '%d'));
-			$delete_relations_query = sprintf(
-				'DELETE FROM %s WHERE profile_id IN (' . $placeholders . ')',
-				$profile_tools_table_sql
-			);
+			$delete_relations_query = 'DELETE FROM ' . $profile_tools_table_sql . ' WHERE profile_id IN (' . $placeholders . ')';
 			$wpdb->query($wpdb->prepare($delete_relations_query, ...$system_ids));
 			$delete_profiles_query = sprintf('DELETE FROM %s WHERE is_system = %%d', $profiles_table_sql);
 			$wpdb->query($wpdb->prepare($delete_profiles_query, 1));

@@ -1,17 +1,15 @@
 <?php
 /*
-  Plugin Name: Easy Visual MCP
-  Plugin URI: https://github.com/estebandezafra/easy-visual-mcp
-  Description: Transform your WordPress site into a Model Context Protocol (MCP) server. Expose 132+ tools that AI agents like ChatGPT, Claude, and LibreChat can use to manage your WordPress and WooCommerce site via JSON-RPC 2.0.
-  Version: 1.0.0
-  Author: estebandezafra
-  Requires PHP: 7.4
-  License: GPL v2 or later
-  License URI: https://www.gnu.org/licenses/gpl-2.0.html
-  Text Domain: easy-visual-mcp
-  Domain Path: /languages
-  
- 
+Plugin Name: Easy Visual MCP
+Plugin URI: https://github.com/estebanstifli/easy-visual-mcp
+Description: Transform your WordPress site into a Model Context Protocol (MCP) server. Expose 129 tools (63 WordPress, 65 WooCommerce, 1 Core) that AI agents like ChatGPT, Claude, and LibreChat can use to manage your WordPress and WooCommerce site via JSON-RPC 2.0.
+Version: 1.0.0
+Author: estebandestifli
+Requires PHP: 7.4
+License: GPL v2 or later
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
+Text Domain: easy-visual-mcp
+Domain Path: /languages
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -640,7 +638,7 @@ function easy_visual_mcp_seed_system_profiles() {
 			'description' => 'All WooCommerce tools (products, orders, tax, shipping, webhooks)',
 			'tools' => array(
 				'mcp_ping',
-				// All WooCommerce tools (66 total)
+				// All WooCommerce tools (65 total)
 				'wc_get_products', 'wc_create_product', 'wc_update_product', 'wc_delete_product', 'wc_batch_update_products',
 				'wc_get_product_variations', 'wc_create_product_variation', 'wc_update_product_variation', 'wc_delete_product_variation',
 				'wc_get_product_categories', 'wc_create_product_category', 'wc_update_product_category', 'wc_delete_product_category',
@@ -663,7 +661,7 @@ function easy_visual_mcp_seed_system_profiles() {
 		),
 		array(
 			'name' => 'Complete Site',
-			'description' => 'All available tools (WordPress + WooCommerce = 132 tools)',
+			'description' => 'All available tools (WordPress + WooCommerce = 129 tools)',
 			'tools' => 'ALL', // Special marker to include all tools
 		),
 		array(
