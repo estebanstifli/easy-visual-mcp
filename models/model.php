@@ -98,14 +98,24 @@ class EasyVisualMcpModel {
         }
         
         // Get enabled tools from database
-        $table = $wpdb->prefix . 'evmcp_tools';
+        $table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
         $enabled_tools = array();
-        
-        // Check if table exists first
-        $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) === $table;
+
+        // Check if table exists first.
+        $like = $wpdb->esc_like($table);
+        $table_exists_query = 'SHOW TABLES LIKE %s';
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- schema introspection requires SHOW TABLES.
+        $table_exists = $wpdb->get_var($wpdb->prepare($table_exists_query, $like)) === $table;
         
         if ($table_exists) {
-            $results = $wpdb->get_results("SELECT tool_name, token_estimate FROM {$table} WHERE enabled = 1", ARRAY_A);
+            $tools_query = EasyVisualMcpUtils::formatSqlWithTables(
+                'SELECT tool_name, token_estimate FROM %s WHERE enabled = %%d',
+                'evmcp_tools'
+            );
+            $results = $wpdb->get_results(
+                $wpdb->prepare($tools_query, 1),
+                ARRAY_A
+            );
             foreach ($results as $row) {
                 $name = isset($row['tool_name']) ? $row['tool_name'] : '';
                 if ('' === $name) {
@@ -1872,7 +1882,8 @@ class EasyVisualMcpModel {
                 break;
             case 'wp_upload_image_from_url':
                 $url = esc_url_raw($utils::getArrayValue($args, 'url'));
-                error_log('[EVMCP] wp_upload_image_from_url: URL received = ' . $url);
+                // Debug logging (remove for production or wrap in WP_DEBUG check)
+                // easy_visual_mcp_log('wp_upload_image_from_url: URL received = ' . $url);
                 
                 if (!$url) { $r['error'] = array('code' => -42602, 'message' => 'url required'); break; }
                 if (!current_user_can('upload_files')) { $r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions to upload files'); break; }
@@ -1890,28 +1901,28 @@ class EasyVisualMcpModel {
                     return $mimes;
                 });
                 
-                error_log('[EVMCP] wp_upload_image_from_url: Starting download...');
+                easy_visual_mcp_log('wp_upload_image_from_url: Starting download...');
                 $tmp = download_url($url);
                 
                 if (is_wp_error($tmp)) { 
-                    error_log('[EVMCP] wp_upload_image_from_url: Download error = ' . $tmp->get_error_message());
+                    easy_visual_mcp_log('wp_upload_image_from_url: Download error = ' . $tmp->get_error_message());
                     $r['error'] = array('code' => 'download_error', 'message' => $tmp->get_error_message()); 
                     break; 
                 }
                 
-                error_log('[EVMCP] wp_upload_image_from_url: Downloaded to temp file = ' . $tmp);
+                easy_visual_mcp_log('wp_upload_image_from_url: Downloaded to temp file = ' . $tmp);
                 
                 // Get file extension from URL or detect from downloaded file
                 $file = array();
                 $basename = wp_basename($url);
-                error_log('[EVMCP] wp_upload_image_from_url: Original basename = ' . $basename);
+                easy_visual_mcp_log('wp_upload_image_from_url: Original basename = ' . $basename);
                 
-                $parsed_url = parse_url($url);
+                $parsed_url = wp_parse_url($url);
                 $path = isset($parsed_url['path']) ? $parsed_url['path'] : '';
                 
                 // If URL doesn't have a clear extension (e.g., Unsplash URLs), detect from file
                 if (!preg_match('/\.(jpg|jpeg|png|gif|webp)$/i', $basename)) {
-                    error_log('[EVMCP] wp_upload_image_from_url: No extension in URL, detecting MIME type...');
+                    easy_visual_mcp_log('wp_upload_image_from_url: No extension in URL, detecting MIME type...');
                     
                     // Try to detect MIME type from file content
                     if (function_exists('mime_content_type')) {
@@ -1922,7 +1933,7 @@ class EasyVisualMcpModel {
                         finfo_close($finfo);
                     }
                     
-                    error_log('[EVMCP] wp_upload_image_from_url: Detected MIME type = ' . $mime);
+                    easy_visual_mcp_log('wp_upload_image_from_url: Detected MIME type = ' . $mime);
                     
                     $ext = 'jpg'; // default
                     if (strpos($mime, 'png') !== false) $ext = 'png';
@@ -1930,7 +1941,7 @@ class EasyVisualMcpModel {
                     else if (strpos($mime, 'webp') !== false) $ext = 'webp';
                     
                     $basename = 'image-' . time() . '.' . $ext;
-                    error_log('[EVMCP] wp_upload_image_from_url: New basename = ' . $basename);
+                    easy_visual_mcp_log('wp_upload_image_from_url: New basename = ' . $basename);
                 }
                 
                 $file['name'] = $basename;
@@ -1940,20 +1951,28 @@ class EasyVisualMcpModel {
                 $file_info = wp_check_filetype($basename);
                 $file['type'] = $file_info['type'];
                 
-                error_log('[EVMCP] wp_upload_image_from_url: File array = ' . print_r($file, true));
-                error_log('[EVMCP] wp_upload_image_from_url: Calling media_handle_sideload...');
+                $fileLog = wp_json_encode($file);
+                if (false === $fileLog) {
+                    $fileLog = '[unserializable]';
+                }
+                easy_visual_mcp_log('wp_upload_image_from_url: File array = ' . $fileLog);
+                easy_visual_mcp_log('wp_upload_image_from_url: Calling media_handle_sideload...');
                 
                 $att_id = media_handle_sideload($file, 0);
                 
                 if (is_wp_error($att_id)) { 
-                    error_log('[EVMCP] wp_upload_image_from_url: Sideload error = ' . $att_id->get_error_message());
-                    error_log('[EVMCP] wp_upload_image_from_url: Sideload error data = ' . print_r($att_id->get_error_data(), true));
-                    @unlink($file['tmp_name']); 
+                    easy_visual_mcp_log('wp_upload_image_from_url: Sideload error = ' . $att_id->get_error_message());
+                    $errorDataLog = wp_json_encode($att_id->get_error_data());
+                    if (false === $errorDataLog) {
+                        $errorDataLog = '[unserializable]';
+                    }
+                    easy_visual_mcp_log('wp_upload_image_from_url: Sideload error data = ' . $errorDataLog);
+                    @wp_delete_file($file['tmp_name']); 
                     $r['error'] = array('code' => 'sideload_error', 'message' => $att_id->get_error_message()); 
                     break; 
                 }
                 
-                error_log('[EVMCP] wp_upload_image_from_url: Success! Attachment ID = ' . $att_id);
+                easy_visual_mcp_log('wp_upload_image_from_url: Success! Attachment ID = ' . $att_id);
                 
                 $att_url = wp_get_attachment_url($att_id);
                 
@@ -2001,7 +2020,7 @@ class EasyVisualMcpModel {
                 $att_id = media_handle_sideload($file_array, $post_id);
                 
                 if (is_wp_error($att_id)) {
-                    @unlink($temp_file);
+                    @wp_delete_file($temp_file);
                     $r['error'] = array('code' => 'upload_error', 'message' => $att_id->get_error_message());
                     break;
                 }
@@ -2301,7 +2320,11 @@ class EasyVisualMcpModel {
                 }
                 $single = isset($args['single']) ? (bool)$args['single'] : true;
                 $value = get_post_meta($post_id, $meta_key, $single);
-                $addResultText($r, 'Valor de meta (' . $meta_key . ') para post ' . $post_id . ': ' . var_export($value, true));
+                $metaValueLog = wp_json_encode($value, JSON_PRETTY_PRINT);
+                if (false === $metaValueLog) {
+                    $metaValueLog = '[unserializable]';
+                }
+                $addResultText($r, 'Valor de meta (' . $meta_key . ') para post ' . $post_id . ': ' . $metaValueLog);
                 break;
             case 'wp_update_post_meta':
                 if (!current_user_can('manage_options')) {
@@ -2352,7 +2375,11 @@ class EasyVisualMcpModel {
                     break;
                 }
                 $val = get_option($option);
-                $addResultText($r, 'Valor de opción (' . $option . '): ' . var_export($val, true));
+                $optionValueLog = wp_json_encode($val, JSON_PRETTY_PRINT);
+                if (false === $optionValueLog) {
+                    $optionValueLog = '[unserializable]';
+                }
+                $addResultText($r, 'Valor de opción (' . $option . '): ' . $optionValueLog);
                 break;
             case 'wp_update_option':
                 if (!current_user_can('manage_options')) {
@@ -2500,6 +2527,8 @@ class EasyVisualMcpModel {
             case 'wp_get_site_health':
                 global $wpdb;
                 
+                $serverSoftware = isset($_SERVER['SERVER_SOFTWARE']) ? sanitize_text_field( wp_unslash( $_SERVER['SERVER_SOFTWARE'] ) ) : 'Unknown';
+                $userAgent = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : 'Unknown';
                 $health = array(
                     'wordpress' => array(
                         'version' => get_bloginfo('version'),
@@ -2510,9 +2539,9 @@ class EasyVisualMcpModel {
                     ),
                     'server' => array(
                         'php_version' => phpversion(),
-                        'server_software' => $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown',
+                        'server_software' => $serverSoftware,
                         'https' => is_ssl(),
-                        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown',
+                        'user_agent' => $userAgent,
                     ),
                     'database' => array(
                         'extension' => $wpdb->use_mysqli ? 'mysqli' : 'mysql',

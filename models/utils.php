@@ -2,13 +2,63 @@
 // Utilidades mínimas para EasyVisualMcp (stub)
 class EasyVisualMcpUtils {
 	public static function getUserAgent() {
-		return $_SERVER['HTTP_USER_AGENT'] ?? '';
+		return isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
 	}
 	public static function getIP() {
-		return $_SERVER['REMOTE_ADDR'] ?? '';
+		return isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : '';
 	}
 	public static function setAdminUser() {
 		// Implementar si es necesario
+	}
+	public static function sanitizeTableSuffix($suffix) {
+		return preg_replace('/[^A-Za-z0-9_]/', '', (string) $suffix);
+	}
+	public static function getPrefixedTable($suffix, $withBackticks = true) {
+		global $wpdb;
+		$cleanSuffix = self::sanitizeTableSuffix($suffix);
+		$tableName = $wpdb->prefix . $cleanSuffix;
+		if (!$withBackticks) {
+			return $tableName;
+		}
+		return '`' . str_replace('`', '', $tableName) . '`';
+	}
+	public static function wrapTableNameForQuery($tableName) {
+		if (!is_string($tableName) || '' === $tableName) {
+			return '';
+		}
+		$clean = preg_replace('/[^A-Za-z0-9_]/', '', $tableName);
+		if ('' === $clean) {
+			return '';
+		}
+		return '`' . $clean . '`';
+	}
+	public static function formatSqlWithTables($template, $suffixes) {
+		if (!is_array($suffixes)) {
+			$suffixes = array($suffixes);
+		}
+		$tables = array();
+		foreach ($suffixes as $suffix) {
+			$tables[] = self::getPrefixedTable($suffix);
+		}
+		return vsprintf($template, $tables);
+	}
+	public static function sanitizeJsonString($value) {
+		if (!is_string($value)) {
+			return '';
+		}
+		$utf8 = wp_check_invalid_utf8($value);
+		return is_string($utf8) ? $utf8 : '';
+	}
+	public static function sanitizeCheckboxMap($values) {
+		if (!is_array($values)) {
+			return array();
+		}
+		$clean = array();
+		foreach ($values as $key => $value) {
+			$cleanKey = absint($key);
+			$clean[$cleanKey] = intval($value) > 0 ? 1 : 0;
+		}
+		return $clean;
 	}
 	public static function getArrayValue($arr, $key, $default = null, $depth = 1) {
 		if (!is_array($arr)) return $default;

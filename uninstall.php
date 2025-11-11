@@ -12,11 +12,23 @@ if (!defined('WP_UNINSTALL_PLUGIN')) {
 
 global $wpdb;
 
+$wrap_table = static function ($table_name) {
+	$clean = preg_replace('/[^A-Za-z0-9_]/', '', (string) $table_name);
+	return '`' . $clean . '`';
+};
+
+$drop_tables = static function (array $tables, $wpdb, $wrap_table) {
+	foreach ($tables as $table_suffix) {
+		$table_name = $wpdb->prefix . $table_suffix;
+		$table_sql = $wrap_table($table_name);
+		$drop_sql = sprintf('DROP TABLE IF EXISTS %s', $table_sql);
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.NotPrepared -- uninstall must remove plugin-managed tables explicitly.
+		$wpdb->query($drop_sql);
+	}
+};
+
 // Drop all plugin tables
-$wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}evmcp_queue");
-$wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}evmcp_tools");
-$wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}evmcp_profile_tools");
-$wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}evmcp_profiles");
+$drop_tables(array('evmcp_queue', 'evmcp_tools', 'evmcp_profile_tools', 'evmcp_profiles'), $wpdb, $wrap_table);
 
 // Delete all plugin options
 delete_option('easy_visual_mcp_token');
@@ -24,15 +36,12 @@ delete_option('easy_visual_mcp_token_user');
 
 // For multisite installations
 if (is_multisite()) {
-	$sites = get_sites(['number' => 0]);
-	foreach ($sites as $site) {
-		switch_to_blog($site->blog_id);
+	$easy_visual_mcp_sites = get_sites(['number' => 0]);
+	foreach ($easy_visual_mcp_sites as $easy_visual_mcp_site) {
+		switch_to_blog($easy_visual_mcp_site->blog_id);
 		
 		// Drop tables for each site
-		$wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}evmcp_queue");
-		$wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}evmcp_tools");
-		$wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}evmcp_profile_tools");
-		$wpdb->query("DROP TABLE IF EXISTS {$wpdb->prefix}evmcp_profiles");
+		$drop_tables(array('evmcp_queue', 'evmcp_tools', 'evmcp_profile_tools', 'evmcp_profiles'), $wpdb, $wrap_table);
 		
 		// Delete options for each site
 		delete_option('easy_visual_mcp_token');

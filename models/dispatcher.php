@@ -5,6 +5,6 @@ class EasyVisualMcpDispatcher {
 		add_filter($tag, $function_to_add, $priority, $accepted_args);
 	}
 	public static function applyFilters($tag, $value, ...$args) {
-		return apply_filters($tag, $value, ...$args);
+		return apply_filters($tag, $value, ...$args); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- proxying to core filter dispatcher
 	}
 }

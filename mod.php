@@ -17,7 +17,7 @@ class EasyVisualMcp {
 	public function __construct() {
 		global $wpdb;
 		if (isset($wpdb->prefix)) {
-			$this->queueTable = $wpdb->prefix . 'evmcp_queue';
+			$this->queueTable = EasyVisualMcpUtils::getPrefixedTable('evmcp_queue', false);
 		}
 	}
 
@@ -80,18 +80,14 @@ class EasyVisualMcp {
 	public function canAccessMCP( $request ) {
 		// If no token configured, allow public access
 		if (empty($this->mcpToken)) {
-			if (defined('WP_DEBUG') && WP_DEBUG) {
-				error_log('[EVMCP] canAccessMCP: no token configured, allowing public access');
-			}
+			easy_visual_mcp_log('canAccessMCP: no token configured, allowing public access');
 			return true;
 		}
 		$isAdmin = current_user_can('manage_options');
-		if (defined('WP_DEBUG') && WP_DEBUG) {
-			$hdr = $request->get_header('Authorization');
-			$qp = $request->get_param('token');
-			$masked = $this->maskToken($this->mcpToken);
-			error_log(sprintf('[EVMCP] canAccessMCP: isAdmin=%s, header=%s, query=%s, stored=%s', $isAdmin ? '1':'0', $hdr ? 'present' : 'none', $qp ? 'present' : 'none', $masked));
-		}
+		$hdr = $request->get_header('Authorization');
+		$qp = $request->get_param('token');
+		$masked = $this->maskToken($this->mcpToken);
+		easy_visual_mcp_log(sprintf('canAccessMCP: isAdmin=%s, header=%s, query=%s, stored=%s', $isAdmin ? '1':'0', $hdr ? 'present' : 'none', $qp ? 'present' : 'none', $masked));
 		// Fallback: check Authorization header or token query param directly (normalize before compare)
 		try {
 			$hdrValue = $request->get_header('Authorization');
@@ -119,20 +115,14 @@ class EasyVisualMcp {
 							EasyVisualMcpUtils::setAdminUser();
 						}
 					}
-					if (defined('WP_DEBUG') && WP_DEBUG) {
-						error_log('[EVMCP] canAccessMCP: token match -> access granted');
-					}
+					easy_visual_mcp_log('canAccessMCP: token match -> access granted');
 					return true;
 				} else {
-					if (defined('WP_DEBUG') && WP_DEBUG) {
-						error_log('[EVMCP] canAccessMCP: token provided but did not match stored token');
-					}
+					easy_visual_mcp_log('canAccessMCP: token provided but did not match stored token');
 				}
 			}
 		} catch (Exception $e) {
-			if (defined('WP_DEBUG') && WP_DEBUG) {
-				error_log('[EVMCP] canAccessMCP: exception during token fallback: ' . $e->getMessage());
-			}
+			easy_visual_mcp_log('canAccessMCP: exception during token fallback: ' . $e->getMessage());
 		}
 
 		return EasyVisualMcpDispatcher::applyFilters('allow_evmcp', $isAdmin, $request);
@@ -207,22 +197,23 @@ class EasyVisualMcp {
 
 	public function handleSSE( $request ) {
 		$body = $request->get_body();
-		if (defined('WP_DEBUG') && WP_DEBUG) {
-			$remote = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'n/a';
-			$ua = $request->get_header('User-Agent');
-			$hdrAuth = $request->get_header('Authorization') ? 'present' : 'none';
-			$qp = $request->get_param('token') ? 'present' : 'none';
-			error_log(sprintf('[EVMCP] handleSSE start: remote=%s, method=%s, auth_header=%s, query_token=%s, body_len=%d, ua=%s', $remote, $request->get_method(), $hdrAuth, $qp, strlen($body), $ua));
-		}
+		$remote = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : 'n/a';
+		$uaHeader = $request->get_header('User-Agent');
+		$ua = $uaHeader ? sanitize_text_field( $uaHeader ) : 'n/a';
+		$hdrAuth = $request->get_header('Authorization') ? 'present' : 'none';
+		$qp = $request->get_param('token') ? 'present' : 'none';
+		easy_visual_mcp_log(sprintf('handleSSE start: remote=%s, method=%s, auth_header=%s, query_token=%s, body_len=%d, ua=%s', $remote, $request->get_method(), $hdrAuth, $qp, strlen($body), $ua));
 		if ($request->get_method() === 'POST' && !empty($body)) {
 			$data = json_decode($body, true);
 			if ($data && isset($data['method'])) {
 				return $this->handleDirectJsonRPC($request, $data);
 			}
 		}
-		@ini_set('zlib.output_compression', '0');
-		@ini_set('output_buffering', '0');
-		@ini_set('implicit_flush', '1');
+		if ( function_exists( 'ini_set' ) ) {
+			ini_set('zlib.output_compression', '0'); // phpcs:ignore WordPress.PHP.DiscouragedFunctions.runtime_ini_set,Squiz.PHP.DiscouragedFunctions.Discouraged
+			ini_set('output_buffering', '0'); // phpcs:ignore WordPress.PHP.DiscouragedFunctions.runtime_ini_set,Squiz.PHP.DiscouragedFunctions.Discouraged
+			ini_set('implicit_flush', '1'); // phpcs:ignore WordPress.PHP.DiscouragedFunctions.runtime_ini_set,Squiz.PHP.DiscouragedFunctions.Discouraged
+		}
 		if (function_exists('ob_implicit_flush')) {
 			ob_implicit_flush( true );
 		}
@@ -241,17 +232,13 @@ class EasyVisualMcp {
 		if (!empty($this->mcpToken)) {
 			$msgUri .= '&token=' . rawurlencode((string) $this->mcpToken);
 		}
-		if (defined('WP_DEBUG') && WP_DEBUG) {
-			error_log('[EVMCP] handleSSE: sessionID=' . $this->sessionID . ' msgUri=' . $msgUri);
-		}
+		easy_visual_mcp_log('handleSSE: sessionID=' . $this->sessionID . ' msgUri=' . $msgUri);
 		$this->reply('endpoint', $msgUri, 'text');
 		while (true) {
 			$maxTime = $this->logging ? 60 : 60 * 5;
 			$idle = ( time() - $this->lastAction ) >= $maxTime;
 			if (connection_aborted() || $idle) {
-				if (defined('WP_DEBUG') && WP_DEBUG) {
-					error_log('[EVMCP] handleSSE: connection aborted or idle, aborting session ' . $this->sessionID);
-				}
+				easy_visual_mcp_log('handleSSE: connection aborted or idle, aborting session ' . $this->sessionID);
 				$this->reply('bye');
 				break;
 			}
@@ -260,9 +247,7 @@ class EasyVisualMcp {
 					$this->reply('bye');
 					exit;
 				}
-				if (defined('WP_DEBUG') && WP_DEBUG) {
-					error_log('[EVMCP] handleSSE: sending message to session ' . $this->sessionID . ' method=' . (isset($p['method']) ? $p['method'] : 'n/a'));
-				}
+				easy_visual_mcp_log('handleSSE: sending message to session ' . $this->sessionID . ' method=' . (isset($p['method']) ? $p['method'] : 'n/a'));
 				$this->reply('message', $p);
 			}
 			usleep(200000);
@@ -284,11 +269,11 @@ class EasyVisualMcp {
 		if ('json' === $enc && null === $data) {
 			return;
 		}
-		echo 'event: ' . $event . "\n";
+		echo 'event: ' . esc_attr( $event ) . "\n";
 		if ('json' === $enc) {
 			$data = null === $data ? '{}' : str_replace('[]', '{}', wp_json_encode($data, JSON_UNESCAPED_UNICODE));
 		}
-		echo 'data: ' . $data . "\n\n";
+		echo 'data: ' . esc_html( $data ) . "\n\n";
 		if (ob_get_level()) {
 			ob_end_flush();
 		}
@@ -299,11 +284,9 @@ class EasyVisualMcp {
 	public function handleDirectJsonRPC( $request, $data ) {
 		$id = isset($data['id']) ? $data['id'] : null;
 		$method = isset($data['method']) ? $data['method'] : null;
-		if (defined('WP_DEBUG') && WP_DEBUG) {
-			$qp = $request->get_param('token') ? 'present' : 'none';
-			$hdr = $request->get_header('Authorization') ? 'present' : 'none';
-			error_log(sprintf('[EVMCP] handleDirectJsonRPC: id=%s method=%s header=%s query=%s', $id, $method, $hdr, $qp));
-		}
+		$qp = $request->get_param('token') ? 'present' : 'none';
+		$hdr = $request->get_header('Authorization') ? 'present' : 'none';
+		easy_visual_mcp_log(sprintf('handleDirectJsonRPC: id=%s method=%s header=%s query=%s', $id, $method, $hdr, $qp));
 		if (json_last_error() !== JSON_ERROR_NONE) {
 			return new WP_REST_Response(array(
 				'jsonrpc' => '2.0',
@@ -413,17 +396,17 @@ class EasyVisualMcp {
 	public function handleMessage( $request ) {
 		   $sess = sanitize_text_field($request->get_param('session_id'));
 		   $body = $request->get_body();
-		   if (defined('WP_DEBUG') && WP_DEBUG) {
-			   $hdr = $request->get_header('Authorization') ? 'present' : 'none';
-			   $qp = $request->get_param('token') ? 'present' : 'none';
-			   $remote = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'n/a';
-			   error_log(sprintf('[EVMCP] handleMessage: session=%s remote=%s header=%s query=%s body_len=%d', $sess, $remote, $hdr, $qp, strlen($body)));
-			   error_log('[EVMCP] handleMessage: RAW BODY: ' . $body);
-		   }
+		   $hdr = $request->get_header('Authorization') ? 'present' : 'none';
+		   $qp = $request->get_param('token') ? 'present' : 'none';
+		   $remote = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : 'n/a';
+		   easy_visual_mcp_log(sprintf('handleMessage: session=%s remote=%s header=%s query=%s body_len=%d', $sess, $remote, $hdr, $qp, strlen($body)));
+		   easy_visual_mcp_log('handleMessage: RAW BODY: ' . $body);
 		   $data = json_decode($body, true);
-		   if (defined('WP_DEBUG') && WP_DEBUG) {
-			   error_log('[EVMCP] handleMessage: JSON decoded: ' . print_r($data, true));
+		   $decodedForLog = wp_json_encode($data);
+		   if (false === $decodedForLog) {
+			   $decodedForLog = '[unserializable]';
 		   }
+		   easy_visual_mcp_log('handleMessage: JSON decoded: ' . $decodedForLog);
 		   $id = isset($data['id']) ? $data['id'] : null;
 		   $method = EasyVisualMcpUtils::getArrayValue($data, 'method', null);
 		if ('initialized' === $method) {
@@ -498,10 +481,16 @@ class EasyVisualMcp {
 					   } elseif (isset($params['tool'])) {
 						   $tool = $params['tool'];
 						   $arguments = isset($params['args']) ? $params['args'] : array();
-					   }
-					   if (defined('WP_DEBUG') && WP_DEBUG) {
-						   error_log('[EVMCP] tools/call: tool=' . print_r($tool, true) . ' arguments=' . print_r($arguments, true));
-					   }
+						}
+						   $toolLog = wp_json_encode($tool);
+						   if (false === $toolLog) {
+							   $toolLog = is_scalar($tool) ? (string) $tool : '[unserializable]';
+						   }
+						   $argsLog = wp_json_encode($arguments);
+						   if (false === $argsLog) {
+							   $argsLog = '[unserializable]';
+						   }
+						   easy_visual_mcp_log(sprintf('tools/call: tool=%s arguments=%s', $toolLog, $argsLog));
 					   $reply = $this->executeTool($tool, $arguments, $id);
 					   break;
 				default:
@@ -533,9 +522,19 @@ class EasyVisualMcp {
 
 	private function executeTool( $tool, $args, $id ) {
 		   try {
-			   if (defined('WP_DEBUG') && WP_DEBUG) {
-				   error_log('[EVMCP] executeTool: tool=' . print_r($tool, true) . ' args=' . print_r($args, true) . ' id=' . print_r($id, true));
+			   $toolLog = wp_json_encode($tool);
+			   if (false === $toolLog) {
+				   $toolLog = is_scalar($tool) ? (string) $tool : '[unserializable]';
 			   }
+			   $argsLog = wp_json_encode($args);
+			   if (false === $argsLog) {
+				   $argsLog = '[unserializable]';
+			   }
+			   $idLog = wp_json_encode($id);
+			   if (false === $idLog) {
+				   $idLog = is_scalar($id) ? (string) $id : '[unserializable]';
+			   }
+			   easy_visual_mcp_log(sprintf('executeTool: tool=%s args=%s id=%s', $toolLog, $argsLog, $idLog));
 			   $filtered = EasyVisualMcpDispatcher::applyFilters('evmcp_callback', null, $tool, $args, $id, $this);
 			   if (!is_null($filtered)) {
 				   if (is_array($filtered) && isset($filtered['jsonrpc']) && isset($filtered['id'])) {
@@ -550,9 +549,7 @@ class EasyVisualMcp {
 			   throw new Exception("Unknown tool: {$tool}");
 		   }
 		   catch ( Exception $e ) {
-			   if (defined('WP_DEBUG') && WP_DEBUG) {
-				   error_log('[EVMCP] executeTool: Exception: ' . $e->getMessage());
-			   }
+			   easy_visual_mcp_log('executeTool: Exception: ' . $e->getMessage());
 			   return $this->rpcError( $id, -44003, $e->getMessage() );
 		   }
 	}
@@ -569,6 +566,10 @@ class EasyVisualMcp {
 		$this->storeMessage($sess, $this->rpcError($id, $code, $msg, $extra));
 	}
 
+	/*
+	 * Custom queue and profile storage relies on plugin-managed tables.
+	 * phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare,PluginCheck.Security.DirectDB.UnescapedDBParameter
+	 */
 	private function storeMessage( $sess, $payload ) {
 		if (empty($sess) || empty($this->queueTable)) {
 			return;
@@ -617,12 +618,12 @@ class EasyVisualMcp {
 			return array();
 		}
 		$now = gmdate('Y-m-d H:i:s');
+		$queue_select = EasyVisualMcpUtils::formatSqlWithTables(
+			'SELECT id, payload FROM %s WHERE session_id = %%s AND expires_at >= %%s ORDER BY id ASC',
+			'evmcp_queue'
+		);
 		$rows = $wpdb->get_results(
-			$wpdb->prepare(
-				"SELECT id, payload FROM {$this->queueTable} WHERE session_id = %s AND expires_at >= %s ORDER BY id ASC",
-				$sessionKey,
-				$now
-			),
+			$wpdb->prepare($queue_select, $sessionKey, $now),
 			ARRAY_A
 		);
 		if (empty($rows)) {
@@ -639,9 +640,9 @@ class EasyVisualMcp {
 			$msgs[] = $decoded;
 		}
 		if (!empty($ids)) {
-			$placeholders = implode(',', array_fill(0, count($ids), '%d'));
-			$query = "DELETE FROM {$this->queueTable} WHERE id IN ($placeholders)";
-			$wpdb->query($wpdb->prepare($query, ...$ids));
+			foreach ($ids as $deleteId) {
+				$wpdb->delete($this->queueTable, array('id' => $deleteId), array('%d'));
+			}
 		}
 		return $msgs;
 	}
@@ -687,40 +688,65 @@ class EasyVisualMcp {
 		check_ajax_referer('evmcp_profiles');
 		
 		global $wpdb;
-		$profile_id = intval($_POST['profile_id'] ?? 0);
+		$profile_id = isset($_POST['profile_id']) ? absint( wp_unslash( $_POST['profile_id'] ) ) : 0;
 		
 		if ($profile_id <= 0) {
 			wp_send_json_error(array('message' => 'Invalid profile ID'));
 		}
 		
-		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
-		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
-		$tools_table = $wpdb->prefix . 'evmcp_tools';
+		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
+		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
+		$tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
+		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($tools_table);
+		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($tools_table);
+		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($tools_table);
+		$profiles_table_sql = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles');
+		$profile_tools_table_sql = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools');
+		$tools_table_sql = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools');
 		
 		// Get profile tools
-		$profile_tools = $wpdb->get_col($wpdb->prepare(
-			"SELECT tool_name FROM {$profile_tools_table} WHERE profile_id = %d",
-			$profile_id
-		));
+		$profile_tools_query = sprintf(
+			'SELECT tool_name FROM %s WHERE profile_id = %%d',
+			$profile_tools_table_sql
+		);
+		$profile_tools = $wpdb->get_col(
+			$wpdb->prepare($profile_tools_query, $profile_id)
+		);
 		
 		if ($profile_tools === null) {
 			wp_send_json_error(array('message' => 'Profile not found'));
 		}
 		
 		// Disable all tools first
-		$wpdb->query("UPDATE {$tools_table} SET enabled = 0");
+		$disable_tools_query = sprintf('UPDATE %s SET enabled = %%d', $tools_table_sql);
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- bulk toggle requires direct UPDATE.
+		$wpdb->query($wpdb->prepare($disable_tools_query, 0));
 		
 		// Enable profile tools
 		if (!empty($profile_tools)) {
 			$placeholders = implode(',', array_fill(0, count($profile_tools), '%s'));
-			$wpdb->query($wpdb->prepare(
-				"UPDATE {$tools_table} SET enabled = 1 WHERE tool_name IN ($placeholders)",
-				...$profile_tools
-			));
+			$enable_tools_query = sprintf(
+				'UPDATE %s SET enabled = 1 WHERE tool_name IN (' . $placeholders . ')',
+				$tools_table_sql
+			);
+			$wpdb->query(
+				$wpdb->prepare(
+					$enable_tools_query,
+					...$profile_tools
+				)
+			);
 		}
 		
 		// Mark profile as active
-		$wpdb->query("UPDATE {$profiles_table} SET is_active = 0");
+		$deactivate_profiles_query = sprintf('UPDATE %s SET is_active = %%d', $profiles_table_sql);
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- bulk toggle requires direct UPDATE.
+		$wpdb->query($wpdb->prepare($deactivate_profiles_query, 0));
 		$wpdb->update($profiles_table, array('is_active' => 1), array('id' => $profile_id), array('%d'), array('%d'));
 		
 		wp_send_json_success(array('message' => count($profile_tools) . ' herramientas habilitadas'));
@@ -733,15 +759,14 @@ class EasyVisualMcp {
 		check_ajax_referer('evmcp_profiles');
 		
 		global $wpdb;
-		$profile_id = intval($_POST['profile_id'] ?? 0);
+		$profile_id = isset($_POST['profile_id']) ? absint( wp_unslash( $_POST['profile_id'] ) ) : 0;
 		
-		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
+		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
+		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
 		
 		// Check if system profile
-		$is_system = $wpdb->get_var($wpdb->prepare(
-			"SELECT is_system FROM {$profiles_table} WHERE id = %d",
-			$profile_id
-		));
+		$system_query = sprintf('SELECT is_system FROM %s WHERE id = %%d', $profiles_table_sql);
+		$is_system = $wpdb->get_var($wpdb->prepare($system_query, $profile_id));
 		
 		if ($is_system === null) {
 			wp_send_json_error(array('message' => 'Profile not found'));
@@ -763,16 +788,16 @@ class EasyVisualMcp {
 		check_ajax_referer('evmcp_profiles');
 		
 		global $wpdb;
-		$profile_id = intval($_POST['profile_id'] ?? 0);
+		$profile_id = isset($_POST['profile_id']) ? absint( wp_unslash( $_POST['profile_id'] ) ) : 0;
 		
-		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
-		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
+		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
+		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
 		
 		// Get original profile
-		$original = $wpdb->get_row($wpdb->prepare(
-			"SELECT * FROM {$profiles_table} WHERE id = %d",
-			$profile_id
-		), ARRAY_A);
+		$profile_query = sprintf('SELECT * FROM %s WHERE id = %%d', $profiles_table_sql);
+		$original = $wpdb->get_row($wpdb->prepare($profile_query, $profile_id), ARRAY_A);
 		
 		if (!$original) {
 			wp_send_json_error(array('message' => 'Profile not found'));
@@ -781,7 +806,8 @@ class EasyVisualMcp {
 		// Create new profile name
 		$new_name = 'Copia de ' . $original['profile_name'];
 		$counter = 1;
-		while ($wpdb->get_var($wpdb->prepare("SELECT id FROM {$profiles_table} WHERE profile_name = %s", $new_name))) {
+		$profile_name_check = sprintf('SELECT id FROM %s WHERE profile_name = %%s', $profiles_table_sql);
+		while ($wpdb->get_var($wpdb->prepare($profile_name_check, $new_name))) {
 			$counter++;
 			$new_name = 'Copia de ' . $original['profile_name'] . ' (' . $counter . ')';
 		}
@@ -805,10 +831,8 @@ class EasyVisualMcp {
 		$new_profile_id = $wpdb->insert_id;
 		
 		// Copy tools
-		$tools = $wpdb->get_col($wpdb->prepare(
-			"SELECT tool_name FROM {$profile_tools_table} WHERE profile_id = %d",
-			$profile_id
-		));
+		$tools_query = sprintf('SELECT tool_name FROM %s WHERE profile_id = %%d', $profile_tools_table_sql);
+		$tools = $wpdb->get_col($wpdb->prepare($tools_query, $profile_id));
 		
 		foreach ($tools as $tool_name) {
 			$wpdb->insert(
@@ -834,31 +858,33 @@ class EasyVisualMcp {
 		global $wpdb;
 		$profile_id = intval($_GET['profile_id'] ?? 0);
 		
-		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
-		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
-		$tools_table = $wpdb->prefix . 'evmcp_tools';
+		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
+		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
+		$tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
+		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($tools_table);
 		
-		$profile = $wpdb->get_row($wpdb->prepare(
-			"SELECT * FROM {$profiles_table} WHERE id = %d",
-			$profile_id
-		), ARRAY_A);
+		$profile_query = sprintf('SELECT * FROM %s WHERE id = %%d', $profiles_table_sql);
+		$profile = $wpdb->get_row($wpdb->prepare($profile_query, $profile_id), ARRAY_A);
 		
 		if (!$profile) {
 			wp_die('Profile not found', 404);
 		}
 		
-		$tools = $wpdb->get_col($wpdb->prepare(
-			"SELECT tool_name FROM {$profile_tools_table} WHERE profile_id = %d ORDER BY tool_name",
-			$profile_id
-		));
+		$tools_query = sprintf('SELECT tool_name FROM %s WHERE profile_id = %%d ORDER BY tool_name', $profile_tools_table_sql);
+		$tools = $wpdb->get_col($wpdb->prepare($tools_query, $profile_id));
 		
 		// Get categories
-		$categories = $wpdb->get_col($wpdb->prepare(
-			"SELECT DISTINCT category FROM {$tools_table} 
-			WHERE tool_name IN (" . implode(',', array_fill(0, count($tools), '%s')) . ")
-			ORDER BY category",
-			...$tools
-		));
+		$categories = array();
+		if (!empty($tools)) {
+			$placeholders = implode(',', array_fill(0, count($tools), '%s'));
+			$categories_query = sprintf(
+				'SELECT DISTINCT category FROM %s WHERE tool_name IN (' . $placeholders . ') ORDER BY category',
+				$tools_table_sql
+			);
+			$categories = $wpdb->get_col($wpdb->prepare($categories_query, ...$tools));
+		}
 		
 		$export = array(
 			'format_version' => '1.0',
@@ -888,11 +914,15 @@ class EasyVisualMcp {
 		check_ajax_referer('evmcp_profiles');
 		
 		global $wpdb;
-		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
-		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
-		$tools_table = $wpdb->prefix . 'evmcp_tools';
-		
-		$json_data = $_POST['profile_json'] ?? '';
+		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
+		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
+		$tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
+		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($tools_table);
+
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitized via sanitizeJsonString.
+		$json_data = isset($_POST['profile_json']) ? EasyVisualMcpUtils::sanitizeJsonString( wp_unslash( $_POST['profile_json'] ) ) : '';
 		if (empty($json_data)) {
 			wp_send_json_error(array('message' => 'No JSON data provided'));
 		}
@@ -905,18 +935,30 @@ class EasyVisualMcp {
 		$profile = $data['profile'];
 		$name = sanitize_text_field($profile['name'] ?? 'Importado');
 		$description = sanitize_textarea_field($profile['description'] ?? '');
-		$tools = $profile['tools'] ?? array();
+		$tools_list = isset($profile['tools']) && is_array($profile['tools']) ? $profile['tools'] : array();
+		$tools = array();
+		foreach ($tools_list as $tool_name) {
+			if (!is_string($tool_name)) {
+				continue;
+			}
+			$clean_tool = sanitize_key($tool_name);
+			if ('' !== $clean_tool) {
+				$tools[] = $clean_tool;
+			}
+		}
 		
 		// Check if name exists
 		$counter = 1;
 		$original_name = $name;
-		while ($wpdb->get_var($wpdb->prepare("SELECT id FROM {$profiles_table} WHERE profile_name = %s", $name))) {
+		$profile_name_check = sprintf('SELECT id FROM %s WHERE profile_name = %%s', $profiles_table_sql);
+		while ($wpdb->get_var($wpdb->prepare($profile_name_check, $name))) {
 			$counter++;
 			$name = $original_name . ' (' . $counter . ')';
 		}
 		
 		// Validate tools exist
-		$existing_tools = $wpdb->get_col("SELECT tool_name FROM {$tools_table}");
+		$existing_tools_query = sprintf('SELECT tool_name FROM %s WHERE 1 = %%d', $tools_table_sql);
+		$existing_tools = $wpdb->get_col($wpdb->prepare($existing_tools_query, 1));
 		$valid_tools = array_intersect($tools, $existing_tools);
 		
 		if (empty($valid_tools)) {
@@ -970,15 +1012,23 @@ class EasyVisualMcp {
 		check_ajax_referer('evmcp_profiles');
 		
 		global $wpdb;
-		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
-		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
+		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
+		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
 		
 		// Delete existing system profiles
-		$system_ids = $wpdb->get_col("SELECT id FROM {$profiles_table} WHERE is_system = 1");
+		$system_ids_query = sprintf('SELECT id FROM %s WHERE is_system = %%d', $profiles_table_sql);
+		$system_ids = $wpdb->get_col($wpdb->prepare($system_ids_query, 1));
 		if (!empty($system_ids)) {
 			$placeholders = implode(',', array_fill(0, count($system_ids), '%d'));
-			$wpdb->query($wpdb->prepare("DELETE FROM {$profile_tools_table} WHERE profile_id IN ($placeholders)", ...$system_ids));
-			$wpdb->query("DELETE FROM {$profiles_table} WHERE is_system = 1");
+			$delete_relations_query = sprintf(
+				'DELETE FROM %s WHERE profile_id IN (' . $placeholders . ')',
+				$profile_tools_table_sql
+			);
+			$wpdb->query($wpdb->prepare($delete_relations_query, ...$system_ids));
+			$delete_profiles_query = sprintf('DELETE FROM %s WHERE is_system = %%d', $profiles_table_sql);
+			$wpdb->query($wpdb->prepare($delete_profiles_query, 1));
 		}
 		
 		// Re-seed system profiles
@@ -1035,11 +1085,11 @@ class EasyVisualMcp {
 	 */
 	public function adminPage() {
 		if (!current_user_can('manage_options')) {
-			wp_die(__('You do not have permission to view this page.','easy-visual-mcp'));
+			wp_die( esc_html__('You do not have permission to view this page.','easy-visual-mcp') );
 		}
 		
 		// Get active tab
-		$active_tab = isset($_GET['tab']) ? sanitize_text_field($_GET['tab']) : 'settings';
+		$active_tab = isset($_GET['tab']) ? sanitize_text_field( wp_unslash( $_GET['tab'] ) ) : 'settings'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- tab selection is a read-only navigation parameter
 		
 		?>
 		<div class="wrap">
@@ -1220,28 +1270,42 @@ class EasyVisualMcp {
 	
 	private function renderToolsTab() {
 		global $wpdb;
-		$table = $wpdb->prefix . 'evmcp_tools';
-		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
-		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+		$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
+		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
+		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
+		$table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($table);
+		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
 		
 		// Check if there's an active profile
-		$active_profile = $wpdb->get_row("SELECT * FROM {$profiles_table} WHERE is_active = 1", ARRAY_A);
+		$active_profile_query = sprintf('SELECT * FROM %s WHERE is_active = %%d', $profiles_table_sql);
+		$active_profile = $wpdb->get_row($wpdb->prepare($active_profile_query, 1), ARRAY_A);
 		
 		// Handle re-seeding
-		if (isset($_POST['evmcp_reseed_nonce']) && wp_verify_nonce($_POST['evmcp_reseed_nonce'], 'evmcp_reseed_tools')) {
-			$wpdb->query("TRUNCATE TABLE {$table}");
+		$reseed_nonce = isset($_POST['evmcp_reseed_nonce']) ? sanitize_text_field( wp_unslash( $_POST['evmcp_reseed_nonce'] ) ) : '';
+		if (!empty($reseed_nonce) && wp_verify_nonce($reseed_nonce, 'evmcp_reseed_tools')) {
+			$truncate_query = sprintf('TRUNCATE TABLE %s', $table_sql);
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.NotPrepared -- admin action intentionally resets plugin-managed table.
+			$wpdb->query($truncate_query);
 			easy_visual_mcp_seed_initial_tools();
 			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools reset and reseeded successfully.', 'easy-visual-mcp') . '</p></div>';
 		}
 		
 		// Handle tool enable/disable
-		if (isset($_POST['evmcp_tools_nonce']) && wp_verify_nonce($_POST['evmcp_tools_nonce'], 'evmcp_update_tools')) {
-			if (isset($_POST['tool_enabled']) && is_array($_POST['tool_enabled'])) {
-				foreach ($_POST['tool_enabled'] as $tool_id => $enabled) {
+		$tools_nonce = isset($_POST['evmcp_tools_nonce']) ? sanitize_text_field( wp_unslash( $_POST['evmcp_tools_nonce'] ) ) : '';
+		if (!empty($tools_nonce) && wp_verify_nonce($tools_nonce, 'evmcp_update_tools')) {
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- values sanitized via sanitizeCheckboxMap.
+			$tool_enabled = EasyVisualMcpUtils::sanitizeCheckboxMap(
+				isset($_POST['tool_enabled']) && is_array($_POST['tool_enabled'])
+					? wp_unslash( $_POST['tool_enabled'] )
+					: array()
+			);
+			if (!empty($tool_enabled)) {
+				foreach ($tool_enabled as $tool_id => $enabled) {
 					$wpdb->update(
 						$table,
-						array('enabled' => intval($enabled), 'updated_at' => current_time('mysql', true)),
-						array('id' => intval($tool_id)),
+						array('enabled' => $enabled, 'updated_at' => current_time('mysql', true)),
+						array('id' => $tool_id),
 						array('%d', '%s'),
 						array('%d')
 					);
@@ -1252,7 +1316,8 @@ class EasyVisualMcp {
 					$wpdb->delete($profile_tools_table, array('profile_id' => $active_profile['id']), array('%d'));
 					
 					// Get all currently enabled tools (WordPress + WooCommerce)
-					$enabled_tools = $wpdb->get_col("SELECT tool_name FROM {$table} WHERE enabled = 1");
+					$enabled_tools_query = sprintf('SELECT tool_name FROM %s WHERE enabled = %%d', $table_sql);
+					$enabled_tools = $wpdb->get_col($wpdb->prepare($enabled_tools_query, 1));
 					
 					// Insert enabled tools into profile
 					if (!empty($enabled_tools)) {
@@ -1272,8 +1337,10 @@ class EasyVisualMcp {
 		}
 		
 		// Get all tools grouped by category (ONLY WordPress, excluding WooCommerce)
-		$tools = $wpdb->get_results("SELECT * FROM {$table} WHERE category NOT LIKE 'WooCommerce%' ORDER BY category, tool_name", ARRAY_A);
-		$enabled_token_total = (int) $wpdb->get_var("SELECT COALESCE(SUM(token_estimate),0) FROM {$table} WHERE category NOT LIKE 'WooCommerce%' AND enabled = 1");
+		$tools_query = sprintf('SELECT * FROM %s WHERE category NOT LIKE %%s ORDER BY category, tool_name', $table_sql);
+		$tools = $wpdb->get_results($wpdb->prepare($tools_query, 'WooCommerce%'), ARRAY_A);
+		$token_sum_query = sprintf('SELECT COALESCE(SUM(token_estimate),0) FROM %s WHERE category NOT LIKE %%s AND enabled = %%d', $table_sql);
+		$enabled_token_total = (int) $wpdb->get_var($wpdb->prepare($token_sum_query, 'WooCommerce%', 1));
 		
 		$grouped_tools = array();
 		foreach ($tools as $tool) {
@@ -1365,28 +1432,42 @@ class EasyVisualMcp {
 	
 	private function renderWCToolsTab() {
 		global $wpdb;
-		$table = $wpdb->prefix . 'evmcp_tools';
-		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
-		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+		$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
+		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
+		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
+		$table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($table);
+		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
 		
 		// Check if there's an active profile
-		$active_profile = $wpdb->get_row("SELECT * FROM {$profiles_table} WHERE is_active = 1", ARRAY_A);
+		$active_profile_query = sprintf('SELECT * FROM %s WHERE is_active = %%d', $profiles_table_sql);
+		$active_profile = $wpdb->get_row($wpdb->prepare($active_profile_query, 1), ARRAY_A);
 		
 		// Handle re-seeding
-		if (isset($_POST['evmcp_reseed_nonce']) && wp_verify_nonce($_POST['evmcp_reseed_nonce'], 'evmcp_reseed_tools')) {
-			$wpdb->query("TRUNCATE TABLE {$table}");
+		$reseed_nonce = isset($_POST['evmcp_reseed_nonce']) ? sanitize_text_field( wp_unslash( $_POST['evmcp_reseed_nonce'] ) ) : '';
+		if (!empty($reseed_nonce) && wp_verify_nonce($reseed_nonce, 'evmcp_reseed_tools')) {
+			$truncate_query = sprintf('TRUNCATE TABLE %s', $table_sql);
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.NotPrepared -- admin action intentionally resets plugin-managed table.
+			$wpdb->query($truncate_query);
 			easy_visual_mcp_seed_initial_tools();
 			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools reset and reseeded successfully.', 'easy-visual-mcp') . '</p></div>';
 		}
 		
 		// Handle tool enable/disable
-		if (isset($_POST['evmcp_tools_nonce']) && wp_verify_nonce($_POST['evmcp_tools_nonce'], 'evmcp_update_tools')) {
-			if (isset($_POST['tool_enabled']) && is_array($_POST['tool_enabled'])) {
-				foreach ($_POST['tool_enabled'] as $tool_id => $enabled) {
+		$tools_nonce = isset($_POST['evmcp_tools_nonce']) ? sanitize_text_field( wp_unslash( $_POST['evmcp_tools_nonce'] ) ) : '';
+		if (!empty($tools_nonce) && wp_verify_nonce($tools_nonce, 'evmcp_update_tools')) {
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- values sanitized via sanitizeCheckboxMap.
+			$tool_enabled = EasyVisualMcpUtils::sanitizeCheckboxMap(
+				isset($_POST['tool_enabled']) && is_array($_POST['tool_enabled'])
+					? wp_unslash( $_POST['tool_enabled'] )
+					: array()
+			);
+			if (!empty($tool_enabled)) {
+				foreach ($tool_enabled as $tool_id => $enabled) {
 					$wpdb->update(
 						$table,
-						array('enabled' => intval($enabled), 'updated_at' => current_time('mysql', true)),
-						array('id' => intval($tool_id)),
+						array('enabled' => $enabled, 'updated_at' => current_time('mysql', true)),
+						array('id' => $tool_id),
 						array('%d', '%s'),
 						array('%d')
 					);
@@ -1397,7 +1478,8 @@ class EasyVisualMcp {
 					$wpdb->delete($profile_tools_table, array('profile_id' => $active_profile['id']), array('%d'));
 					
 					// Get all currently enabled tools (WordPress + WooCommerce)
-					$enabled_tools = $wpdb->get_col("SELECT tool_name FROM {$table} WHERE enabled = 1");
+					$enabled_tools_query = sprintf('SELECT tool_name FROM %s WHERE enabled = %%d', $table_sql);
+					$enabled_tools = $wpdb->get_col($wpdb->prepare($enabled_tools_query, 1));
 					
 					// Insert enabled tools into profile
 					if (!empty($enabled_tools)) {
@@ -1417,8 +1499,10 @@ class EasyVisualMcp {
 		}
 		
 		// Get all WooCommerce tools grouped by category
-		$tools = $wpdb->get_results("SELECT * FROM {$table} WHERE category LIKE 'WooCommerce%' ORDER BY category, tool_name", ARRAY_A);
-		$enabled_token_total = (int) $wpdb->get_var("SELECT COALESCE(SUM(token_estimate),0) FROM {$table} WHERE category LIKE 'WooCommerce%' AND enabled = 1");
+		$wc_tools_query = sprintf("SELECT * FROM %s WHERE category LIKE %%s ORDER BY category, tool_name", $table_sql);
+		$tools = $wpdb->get_results($wpdb->prepare($wc_tools_query, 'WooCommerce%'), ARRAY_A);
+		$wc_token_sum_query = sprintf("SELECT COALESCE(SUM(token_estimate),0) FROM %s WHERE category LIKE %%s AND enabled = %%d", $table_sql);
+		$enabled_token_total = (int) $wpdb->get_var($wpdb->prepare($wc_token_sum_query, 'WooCommerce%', 1));
 		
 		$grouped_tools = array();
 		foreach ($tools as $tool) {
@@ -1467,7 +1551,8 @@ class EasyVisualMcp {
 		<div class="notice notice-info">
 			<p><?php echo esc_html__('No WooCommerce tools found in the database. Use the "Reset and Reseed" button in the WordPress tab to load them.', 'easy-visual-mcp'); ?></p>
 		</div>
-	<?php else: ?>		<form method="post" action="">
+	<?php else: ?>
+		<form method="post" action="">
 			<?php wp_nonce_field('evmcp_update_tools', 'evmcp_tools_nonce'); ?>
 			
 			<?php foreach ($grouped_tools as $category => $category_tools): ?>
@@ -1510,21 +1595,30 @@ class EasyVisualMcp {
 	
 	private function renderProfilesTab() {
 		global $wpdb;
-		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
-		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
-		$tools_table = $wpdb->prefix . 'evmcp_tools';
+		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
+		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
+		$tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
+		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($tools_table);
 		
 		// Get all profiles with tool count and estimated tokens
-		$profiles = $wpdb->get_results("
-			SELECT p.*, COUNT(pt.id) as tools_count, COALESCE(SUM(t.token_estimate),0) as tokens_sum
-			FROM {$profiles_table} p
-			LEFT JOIN {$profile_tools_table} pt ON p.id = pt.profile_id
-			LEFT JOIN {$tools_table} t ON pt.tool_name = t.tool_name
-			GROUP BY p.id
-			ORDER BY p.is_system DESC, p.profile_name ASC
-		", ARRAY_A);
-		
-		$total_tools = $wpdb->get_var("SELECT COUNT(*) FROM {$tools_table}");
+		$profiles_query = sprintf(
+			"SELECT p.*, COUNT(pt.id) AS tools_count, COALESCE(SUM(t.token_estimate),0) AS tokens_sum\n"
+			."FROM %s p\n"
+			."LEFT JOIN %s pt ON p.id = pt.profile_id\n"
+			."LEFT JOIN %s t ON pt.tool_name = t.tool_name\n"
+			."WHERE 1 = %%d\n"
+			."GROUP BY p.id\n"
+			."ORDER BY p.is_system DESC, p.profile_name ASC",
+			$profiles_table_sql,
+			$profile_tools_table_sql,
+			$tools_table_sql
+		);
+		$profiles = $wpdb->get_results($wpdb->prepare($profiles_query, 1), ARRAY_A);
+
+		$total_tools_query = sprintf('SELECT COUNT(*) FROM %s WHERE 1 = %%d', $tools_table_sql);
+		$total_tools = $wpdb->get_var($wpdb->prepare($total_tools_query, 1));
 		
 		?>
 		<p><?php echo esc_html__('Profiles allow you to quickly switch which tools are available for different use cases.', 'easy-visual-mcp'); ?></p>
@@ -1583,10 +1677,12 @@ class EasyVisualMcp {
 					<?php foreach ($system_profiles as $profile): ?>
 						<?php
 						// Get tools for this profile
-						$profile_tools_rows = $wpdb->get_results($wpdb->prepare(
-							"SELECT t.tool_name FROM {$profile_tools_table} pt LEFT JOIN {$tools_table} t ON pt.tool_name = t.tool_name WHERE pt.profile_id = %d ORDER BY t.tool_name",
-							$profile['id']
-						), ARRAY_A);
+						$system_tools_query = sprintf(
+							'SELECT t.tool_name FROM %s pt LEFT JOIN %s t ON pt.tool_name = t.tool_name WHERE pt.profile_id = %%d ORDER BY t.tool_name',
+							$profile_tools_table_sql,
+							$tools_table_sql
+						);
+						$profile_tools_rows = $wpdb->get_results($wpdb->prepare($system_tools_query, $profile['id']), ARRAY_A);
 						$profile_tools_list = array();
 						if (!empty($profile_tools_rows)) {
 							foreach ($profile_tools_rows as $tool_row) {
@@ -1649,10 +1745,12 @@ class EasyVisualMcp {
 					<?php foreach ($custom_profiles as $profile): ?>
 						<?php
 						// Get tools for this profile
-						$profile_tools_rows = $wpdb->get_results($wpdb->prepare(
-							"SELECT t.tool_name, COALESCE(t.token_estimate,0) as token_estimate FROM {$profile_tools_table} pt LEFT JOIN {$tools_table} t ON pt.tool_name = t.tool_name WHERE pt.profile_id = %d ORDER BY t.tool_name",
-							$profile['id']
-						), ARRAY_A);
+						$custom_tools_query = sprintf(
+							'SELECT t.tool_name, COALESCE(t.token_estimate,0) as token_estimate FROM %s pt LEFT JOIN %s t ON pt.tool_name = t.tool_name WHERE pt.profile_id = %%d ORDER BY t.tool_name',
+							$profile_tools_table_sql,
+							$tools_table_sql
+						);
+						$profile_tools_rows = $wpdb->get_results($wpdb->prepare($custom_tools_query, $profile['id']), ARRAY_A);
 						$profile_tools_list = array();
 						if (!empty($profile_tools_rows)) {
 							foreach ($profile_tools_rows as $tool_row) {
@@ -1710,7 +1808,7 @@ class EasyVisualMcp {
 			// Helper for AJAX calls
 			function evmcpAjax(action, data, successMsg) {
 				data.action = action;
-				data._wpnonce = '<?php echo wp_create_nonce('evmcp_profiles'); ?>';
+				data._wpnonce = '<?php echo esc_js( wp_create_nonce('evmcp_profiles') ); ?>';
 				
 				return fetch(ajaxurl, {
 					method: 'POST',
@@ -1754,7 +1852,7 @@ class EasyVisualMcp {
 				btn.addEventListener('click', function() {
 					const profileId = this.dataset.profileId;
 					const profileName = this.dataset.profileName;
-					window.location.href = ajaxurl + '?action=evmcp_export_profile&profile_id=' + profileId + '&_wpnonce=<?php echo wp_create_nonce('evmcp_profiles'); ?>';
+					window.location.href = ajaxurl + '?action=evmcp_export_profile&profile_id=' + profileId + '&_wpnonce=<?php echo esc_js( wp_create_nonce('evmcp_profiles') ); ?>';
 				});
 			});
 			
@@ -1828,6 +1926,7 @@ class EasyVisualMcp {
 		</script>
 		<?php
 	}
+	/* phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare,PluginCheck.Security.DirectDB.UnescapedDBParameter */
 }
 
 

@@ -322,10 +322,11 @@ class EasyVisualMcp_WC_System {
         switch ($tool) {
             // Reports
             case 'wc_get_sales_report':
-                $date_min = sanitize_text_field($utils::getArrayValue($args, 'date_min', date('Y-m-d', strtotime('-30 days'))));
-                $date_max = sanitize_text_field($utils::getArrayValue($args, 'date_max', date('Y-m-d')));
+                $date_min = sanitize_text_field($utils::getArrayValue($args, 'date_min', gmdate('Y-m-d', strtotime('-30 days'))));
+                $date_max = sanitize_text_field($utils::getArrayValue($args, 'date_max', gmdate('Y-m-d')));
                 
                 global $wpdb;
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- WooCommerce aggregates require manual SQL for performance.
                 $total_sales = $wpdb->get_var($wpdb->prepare(
                     "SELECT SUM(meta_value) FROM {$wpdb->postmeta} pm
                     LEFT JOIN {$wpdb->posts} p ON pm.post_id = p.ID
@@ -338,6 +339,7 @@ class EasyVisualMcp_WC_System {
                     $date_max . ' 23:59:59'
                 ));
                 
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- WooCommerce aggregates require manual SQL for performance.
                 $order_count = $wpdb->get_var($wpdb->prepare(
                     "SELECT COUNT(*) FROM {$wpdb->posts}
                     WHERE post_type = 'shop_order'
@@ -361,6 +363,7 @@ class EasyVisualMcp_WC_System {
                 $limit = intval($utils::getArrayValue($args, 'limit', 10));
                 
                 global $wpdb;
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- WooCommerce sales reports rely on direct SQL joins.
                 $top_sellers = $wpdb->get_results($wpdb->prepare(
                     "SELECT pm.meta_value as product_id, SUM(oim.meta_value) as qty
                     FROM {$wpdb->prefix}woocommerce_order_items oi
@@ -436,6 +439,7 @@ class EasyVisualMcp_WC_System {
                     'tax_rate_class' => sanitize_text_field($utils::getArrayValue($args, 'tax_class', '')),
                 );
                 
+                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- WooCommerce core stores tax rates in custom tables.
                 $wpdb->insert($wpdb->prefix . 'woocommerce_tax_rates', $tax_rate);
                 $tax_rate_id = $wpdb->insert_id;
                 
@@ -469,6 +473,7 @@ class EasyVisualMcp_WC_System {
                 }
                 
                 if (!empty($update_data)) {
+                    // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- WooCommerce core stores tax rates in custom tables.
                     $wpdb->update(
                         $wpdb->prefix . 'woocommerce_tax_rates',
                         $update_data,
@@ -645,12 +650,15 @@ class EasyVisualMcp_WC_System {
                 
             // System Status
             case 'wc_get_system_status':
+                $serverSoftware = isset($_SERVER['SERVER_SOFTWARE']) ? sanitize_text_field( wp_unslash( $_SERVER['SERVER_SOFTWARE'] ) ) : 'Unknown';
+                $userAgent = isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : 'Unknown';
                 $status = array(
                     'environment' => array(
                         'wp_version' => get_bloginfo('version'),
                         'wc_version' => WC()->version,
                         'php_version' => phpversion(),
-                        'server_info' => $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown',
+                        'server_info' => $serverSoftware,
+                        'user_agent' => $userAgent,
                     ),
                     'database' => array(
                         'wc_database_version' => get_option('woocommerce_db_version'),
@@ -678,6 +686,7 @@ class EasyVisualMcp_WC_System {
                         
                     case 'delete_orphaned_variations':
                         global $wpdb;
+                        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- field updates require direct SQL for orphaned WooCommerce posts.
                         $result = $wpdb->query(
                             "DELETE products
                             FROM {$wpdb->posts} products

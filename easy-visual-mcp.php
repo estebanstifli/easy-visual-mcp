@@ -1,29 +1,61 @@
 <?php
-/**
- * Plugin Name: Easy Visual MCP
- * Plugin URI: https://github.com/estebandezafra/easy-visual-mcp
- * Description: Transform your WordPress site into a Model Context Protocol (MCP) server. Expose 132+ tools that AI agents like ChatGPT, Claude, and LibreChat can use to manage your WordPress and WooCommerce site via JSON-RPC 2.0.
- * Version: 1.0.0
- * Author: Esteban de Zafra
- * Author URI: https://github.com/estebandezafra
- * License: GPL v2 or later
- * License URI: https://www.gnu.org/licenses/gpl-2.0.html
- * Text Domain: easy-visual-mcp
- * Domain Path: /languages
- * Requires at least: 5.8
- * Requires PHP: 7.4
- * 
- * @package Easy_Visual_MCP
+/*
+  Plugin Name: Easy Visual MCP
+  Plugin URI: https://github.com/estebandezafra/easy-visual-mcp
+  Description: Transform your WordPress site into a Model Context Protocol (MCP) server. Expose 132+ tools that AI agents like ChatGPT, Claude, and LibreChat can use to manage your WordPress and WooCommerce site via JSON-RPC 2.0.
+  Version: 1.0.0
+  Author: estebandezafra
+  Requires PHP: 7.4
+  License: GPL v2 or later
+  License URI: https://www.gnu.org/licenses/gpl-2.0.html
+  Text Domain: easy-visual-mcp
+  Domain Path: /languages
+  
+ 
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-// Load plugin text domain for translations
-add_action('init', function() {
-	load_plugin_textdomain('easy-visual-mcp', false, dirname(plugin_basename(__FILE__)) . '/languages');
-});
+// define debug constant
+if ( ! defined( 'EVMCP_DEBUG' ) ) {
+	define( 'EVMCP_DEBUG', false );
+}
+
+// Debug logging function
+if (!function_exists('easy_visual_mcp_log')) {
+	function easy_visual_mcp_log($message, array $context = []) {
+        if (!defined('EVMCP_DEBUG') || EVMCP_DEBUG !== true) {
+            return;
+        }
+
+        if (!is_string($message)) {
+            $encoded = wp_json_encode($message);
+            if ($encoded !== false) {
+                $message = $encoded;
+            } else {
+                // Fallback to safe string/serialization without using print_r
+                if (is_scalar($message)) {
+                    $message = (string) $message;
+                } else {
+                    $message = maybe_serialize($message);
+                }
+            }
+        }
+
+        if (!empty($context)) {
+            $encoded_context = wp_json_encode($context);
+            if ($encoded_context !== false) {
+                $message .= ' ' . $encoded_context;
+            }
+        }
+		error_log('[EVMCP] ' . $message); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- gated by EVMCP_DEBUG for opt-in debugging only
+	}
+}
+
+// WordPress automatically loads translations from WordPress.org since 4.6+
+// No need to manually call load_plugin_textdomain() for plugins hosted on WordPress.org
 
 // Bootstrap: load necessary helpers and classes before the main module
 require_once __DIR__ . '/models/utils.php';
@@ -34,16 +66,22 @@ require_once __DIR__ . '/models/model.php';
 require_once __DIR__ . '/controller.php';
 require_once __DIR__ . '/mod.php';
 
+/*
+ * Custom data layer for plugin tables.
+ * phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter
+ */
+
 function easy_visual_mcp_maybe_create_queue_table() {
 	global $wpdb;
-	$table = $wpdb->prefix . 'evmcp_queue';
+	$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_queue', false);
 	$like = $wpdb->esc_like($table);
 	$exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $like));
 	if ($exists === $table) {
 		return;
 	}
 	$charset_collate = $wpdb->get_charset_collate();
-	$sql = "CREATE TABLE {$table} (
+	$sql = sprintf(
+		"CREATE TABLE %s (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 		session_id VARCHAR(191) NOT NULL,
 		message_id VARCHAR(191) DEFAULT NULL,
@@ -53,21 +91,25 @@ function easy_visual_mcp_maybe_create_queue_table() {
 		PRIMARY KEY (id),
 		KEY session_created (session_id, created_at),
 		KEY expires_at (expires_at)
-	) {$charset_collate};";
+	) %s;",
+		EasyVisualMcpUtils::getPrefixedTable('evmcp_queue'),
+		$charset_collate
+	);
 	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 	dbDelta($sql);
 }
 
 function easy_visual_mcp_maybe_create_tools_table() {
 	global $wpdb;
-	$table = $wpdb->prefix . 'evmcp_tools';
+	$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
 	$like = $wpdb->esc_like($table);
 	$exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $like));
 	if ($exists === $table) {
 		return;
 	}
 	$charset_collate = $wpdb->get_charset_collate();
-	$sql = "CREATE TABLE {$table} (
+	$sql = sprintf(
+		"CREATE TABLE %s (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 		tool_name VARCHAR(191) NOT NULL,
 		tool_description TEXT,
@@ -80,34 +122,50 @@ function easy_visual_mcp_maybe_create_tools_table() {
 		UNIQUE KEY tool_name (tool_name),
 		KEY category (category),
 		KEY enabled (enabled)
-	) {$charset_collate};";
+	) %s;",
+		EasyVisualMcpUtils::getPrefixedTable('evmcp_tools'),
+		$charset_collate
+	);
 	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 	dbDelta($sql);
 }
 
 function easy_visual_mcp_maybe_add_tools_token_column() {
 	global $wpdb;
-	$table = $wpdb->prefix . 'evmcp_tools';
+	$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
 	$like = $wpdb->esc_like($table);
 	$exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $like));
 	if ($exists !== $table) {
 		return;
 	}
-	$column = $wpdb->get_var($wpdb->prepare("SHOW COLUMNS FROM {$table} LIKE %s", 'token_estimate'));
+	$columns_query = EasyVisualMcpUtils::formatSqlWithTables(
+		'SHOW COLUMNS FROM %s LIKE %%s',
+		'evmcp_tools'
+	);
+	$column = $wpdb->get_var($wpdb->prepare($columns_query, 'token_estimate'));
 	if (null === $column) {
-		$wpdb->query("ALTER TABLE {$table} ADD COLUMN token_estimate INT UNSIGNED NOT NULL DEFAULT 0 AFTER enabled");
+		$wpdb->query(
+			sprintf(
+				'ALTER TABLE %s ADD COLUMN token_estimate INT UNSIGNED NOT NULL DEFAULT 0 AFTER enabled',
+				EasyVisualMcpUtils::getPrefixedTable('evmcp_tools')
+			)
+		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange,WordPress.DB.PreparedSQL.NotPrepared -- schema migration for plugin-managed table
 	}
 }
 
 function easy_visual_mcp_sync_tool_token_estimates() {
 	global $wpdb;
-	$table = $wpdb->prefix . 'evmcp_tools';
+	$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
 	$like = $wpdb->esc_like($table);
 	$exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $like));
 	if ($exists !== $table || !class_exists('EasyVisualMcpModel')) {
 		return;
 	}
-	$rows = $wpdb->get_results("SELECT tool_name, tool_description, token_estimate FROM {$table}", ARRAY_A);
+	$tools_select = EasyVisualMcpUtils::formatSqlWithTables(
+		'SELECT tool_name, tool_description, token_estimate FROM %s WHERE 1 = %%d',
+		'evmcp_tools'
+	);
+	$rows = $wpdb->get_results($wpdb->prepare($tools_select, 1), ARRAY_A);
 	if (!is_array($rows)) {
 		return;
 	}
@@ -151,7 +209,7 @@ function easy_visual_mcp_sync_tool_token_estimates() {
 			continue;
 		}
 		$wpdb->update(
-			$table,
+			EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false),
 			array(
 				'token_estimate' => $estimate,
 				'updated_at' => $now,
@@ -168,6 +226,10 @@ if (did_action('woocommerce_loaded')) {
 	easy_visual_mcp_sync_tool_token_estimates();
 }
 
+/*
+ * Custom data layer for plugin-managed tables.
+ * phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter
+ */
 function easy_visual_mcp_maybe_create_profiles_table() {
 	global $wpdb;
 	$table = $wpdb->prefix . 'evmcp_profiles';
@@ -733,12 +795,17 @@ function easy_visual_mcp_deactivate() {
 add_action('evmcp_clean_queue', 'easy_visual_mcp_clean_queue');
 function easy_visual_mcp_clean_queue() {
 	global $wpdb;
-	$table = $wpdb->prefix . 'evmcp_queue';
+	$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_queue');
 	$now = gmdate('Y-m-d H:i:s');
 	$wpdb->query(
-		$wpdb->prepare("DELETE FROM {$table} WHERE expires_at < %s", $now)
+		$wpdb->prepare(
+			'DELETE FROM ' . $table . ' WHERE expires_at < %s',
+			$now
+		)
 	);
 }
+
+/* phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter */
 
 // Plugin initialization
 add_action('plugins_loaded', function() {
