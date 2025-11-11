@@ -1,4 +1,15 @@
 <?php
+require_once ABSPATH . 'wp-admin/includes/misc.php';
+require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader-skin.php';
+
+// Load WooCommerce modules if WooCommerce is active
+if ( class_exists( 'WooCommerce' ) ) {
+    require_once dirname(__FILE__) . '/woocommerce/wc-products.php';
+    require_once dirname(__FILE__) . '/woocommerce/wc-orders.php';
+    require_once dirname(__FILE__) . '/woocommerce/wc-customers-coupons.php';
+    require_once dirname(__FILE__) . '/woocommerce/wc-system.php';
+}
+
 // Model MCP con tools completas + intención/consentimiento
 class EasyVisualMcpModel {
     private $tools = false;
@@ -11,7 +22,7 @@ class EasyVisualMcpModel {
         $WRITE = array(
             'wp_create_post','wp_update_post','wp_delete_post',
             'wp_create_comment','wp_update_comment','wp_delete_comment',
-            'wp_create_user','wp_update_user',
+            'wp_create_user','wp_update_user','wp_delete_user',
             'wp_upload_image_from_url',
             'wp_activate_plugin','wp_deactivate_plugin',
             'wp_install_plugin','wp_install_theme',
@@ -19,14 +30,51 @@ class EasyVisualMcpModel {
             'wp_update_option','wp_delete_option',
             'wp_update_post_meta','wp_delete_post_meta',
             'wp_create_term','wp_delete_term',
-            'wp_create_nav_menu','wp_add_nav_menu_item','wp_update_nav_menu_item','wp_delete_nav_menu_item','wp_delete_nav_menu'
+            'wp_create_nav_menu','wp_add_nav_menu_item','wp_update_nav_menu_item','wp_delete_nav_menu_item','wp_delete_nav_menu',
+            'wp_create_page','wp_update_page','wp_delete_page',
+            'wp_create_category','wp_update_category','wp_delete_category',
+            'wp_create_tag','wp_update_tag','wp_delete_tag',
+            'wp_update_media_item','wp_delete_media_item',
+            'wp_update_settings',
+            // WordPress - Additional write operations
+            'wp_update_user_meta','wp_delete_user_meta',
+            'wp_restore_post_revision',
+            // WooCommerce write operations
+            'wc_create_product','wc_update_product','wc_delete_product','wc_batch_update_products',
+            'wc_create_product_variation','wc_update_product_variation','wc_delete_product_variation',
+            'wc_create_product_category','wc_update_product_category','wc_delete_product_category',
+            'wc_create_product_tag','wc_update_product_tag','wc_delete_product_tag',
+            'wc_create_product_review','wc_update_product_review','wc_delete_product_review',
+            'wc_create_order','wc_update_order','wc_delete_order','wc_batch_update_orders',
+            'wc_create_order_note','wc_delete_order_note',
+            'wc_create_customer','wc_update_customer','wc_delete_customer',
+            'wc_create_coupon','wc_update_coupon','wc_delete_coupon',
+            'wc_create_tax_rate','wc_update_tax_rate','wc_delete_tax_rate',
+            'wc_create_shipping_zone','wc_update_shipping_zone','wc_delete_shipping_zone',
+            'wc_update_payment_gateway',
+            'wc_run_system_status_tool',
+            'wc_update_setting_option',
+            'wc_create_webhook','wc_update_webhook','wc_delete_webhook',
+            // WooCommerce - Stock & Refunds
+            'wc_update_stock','wc_set_stock_status',
+            'wc_create_refund','wc_delete_refund'
         );
 
         // Lectura sensible (requiere permisos elevados o toca red externa)
         $SENSITIVE_READ = array(
             'wp_get_option',        // requiere manage_options en dispatch
             'wp_get_post_meta',     // requiere manage_options en dispatch
-            'fetch'                 // red externa: tratar como lectura sensible
+            'wp_get_settings',      // requiere manage_options
+            'fetch',                // red externa: tratar como lectura sensible
+            // WordPress - Additional sensitive reads
+            'wp_get_user_meta',     // user privacy data
+            'wp_get_site_health',   // system information
+            // WooCommerce sensitive reads
+            'wc_get_customers',     // customer data privacy
+            'wc_get_orders',        // order data privacy
+            'wc_get_order_notes',   // order notes may contain sensitive info
+            'wc_get_system_status', // system information
+            'wc_get_settings'       // WooCommerce settings
         );
 
         if (in_array($name, $WRITE, true)) {
@@ -40,25 +88,63 @@ class EasyVisualMcpModel {
 
     /**
      * Devuelve la lista de tools con categoría + intención + confirmación.
+     * Filtra por herramientas habilitadas en wp_evmcp_tools.
      */
     public function getToolsList() {
+        global $wpdb;
         $tools = $this->getTools();
         if (!is_array($tools)) {
             return [];
         }
-        foreach ($tools as &$tool) {
-            // Categoría
-            if (in_array($tool['name'], array('search', 'fetch'), true)) {
-                $tool['category'] = 'Core: OpenAI';
-            } else {
-                $tool['category'] = 'Core';
+        
+        // Get enabled tools from database
+        $table = $wpdb->prefix . 'evmcp_tools';
+        $enabled_tools = array();
+        
+        // Check if table exists first
+        $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table)) === $table;
+        
+        if ($table_exists) {
+            $results = $wpdb->get_results("SELECT tool_name, token_estimate FROM {$table} WHERE enabled = 1", ARRAY_A);
+            foreach ($results as $row) {
+                $name = isset($row['tool_name']) ? $row['tool_name'] : '';
+                if ('' === $name) {
+                    continue;
+                }
+                $enabled_tools[$name] = isset($row['token_estimate']) ? (int) $row['token_estimate'] : 0;
             }
-            // Intención y consentimiento
-            $meta = $this->getIntentForTool($tool['name']);
-            $tool['intent'] = $meta['intent']; // read | sensitive_read | write
-            $tool['requires_confirmation'] = $meta['requires_confirmation']; // bool
         }
-        return array_values($tools);
+        
+        // Filter tools by enabled status
+        $filtered_tools = array();
+        foreach ($tools as $tool) {
+            $name = EasyVisualMcpUtils::getArrayValue($tool, 'name', '');
+            if ('' === $name) {
+                continue;
+            }
+            // If table doesn't exist or tool is in enabled list, include it
+            if (!$table_exists || array_key_exists($name, $enabled_tools)) {
+                // Categoría
+                if (in_array($name, array('search', 'fetch'), true)) {
+                    $tool['category'] = 'Core: OpenAI';
+                } else {
+                    $tool['category'] = 'Core';
+                }
+                // Intención y consentimiento
+                $meta = $this->getIntentForTool($name);
+                $tool['intent'] = $meta['intent']; // read | sensitive_read | write
+                $tool['requires_confirmation'] = $meta['requires_confirmation']; // bool
+                if ($table_exists) {
+                    $tool['tokenEstimate'] = isset($enabled_tools[$name]) ? (int) $enabled_tools[$name] : EasyVisualMcpUtils::estimateToolTokenUsage($tool);
+                } else {
+                    $tool['tokenEstimate'] = EasyVisualMcpUtils::estimateToolTokenUsage($tool);
+                }
+                
+                $filtered_tools[] = $tool;
+            }
+        }
+        
+        return array_values($filtered_tools);
     }
 
     /**
@@ -112,7 +198,7 @@ class EasyVisualMcpModel {
                 // Posts (mutación)
                 'wp_create_post' => array(
                     'name' => 'wp_create_post',
-                    'description' => 'Crea un post. Requiere post_title. Opcionales: post_content, post_status, post_type, post_excerpt, post_author, meta_input.',
+                    'description' => 'Create a post. Requires post_title. Optional: post_content, post_status, post_type, post_excerpt, post_author, meta_input, post_category, tax_input, etc. The parameters should match the standard WordPress wp_insert_post() function.',
                     'inputSchema' => array(
                         'type' => 'object',
                         'properties' => array(
@@ -124,13 +210,15 @@ class EasyVisualMcpModel {
                             'post_author'  => array('type' => 'integer'),
                             'meta_input'   => array('type' => 'object'),
                             'post_name'    => array('type' => 'string'),
+                            'post_category'=> array('type' => 'array', 'items' => array('type' => 'integer')),
+                            'tax_input'    => array('type' => 'object'),
                         ),
                         'required' => array('post_title'),
                     ),
                 ),
                 'wp_update_post' => array(
                     'name' => 'wp_update_post',
-                    'description' => 'Update a post by ID.',
+                    'description' => 'Update a post by ID. The "fields" object should use the standard parameters accepted by the WordPress wp_update_post() function, such as post_title, post_content, post_category (array of category IDs), tax_input, etc.',
                     'inputSchema' => array(
                         'type' => 'object',
                         'properties' => array(
@@ -298,6 +386,21 @@ class EasyVisualMcpModel {
                             'url' => array('type' => 'string'),
                         ),
                         'required' => array('url'),
+                    ),
+                ),
+                'wp_upload_image' => array(
+                    'name' => 'wp_upload_image',
+                    'description' => 'Upload an image from base64 data and create a media attachment. Useful for AI-generated images. Returns attachment ID and URL.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'image_data' => array('type' => 'string', 'description' => 'Base64 encoded image data'),
+                            'filename' => array('type' => 'string', 'description' => 'Filename with extension (e.g., "image.png")'),
+                            'alt_text' => array('type' => 'string', 'description' => 'Alt text for the image'),
+                            'title' => array('type' => 'string', 'description' => 'Title for the image'),
+                            'post_id' => array('type' => 'integer', 'description' => 'Optional post ID to attach the image to'),
+                        ),
+                        'required' => array('image_data', 'filename'),
                     ),
                 ),
 
@@ -600,7 +703,376 @@ class EasyVisualMcpModel {
                         'required' => array('url'),
                     ),
                 ),
+                
+                // Pages
+                'wp_get_pages' => array(
+                    'name' => 'wp_get_pages',
+                    'description' => 'List pages with filters (post_status, search, limit, offset, orderby, order).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'post_status' => array('type' => 'string'),
+                            'search'      => array('type' => 'string'),
+                            'limit'       => array('type' => 'integer'),
+                            'offset'      => array('type' => 'integer'),
+                            'orderby'     => array('type' => 'string'),
+                            'order'       => array('type' => 'string'),
+                        ),
+                        'required' => array(),
+                    ),
+                ),
+                'wp_create_page' => array(
+                    'name' => 'wp_create_page',
+                    'description' => 'Create a new page (post_title, post_content, post_status, post_author, post_parent, menu_order, meta_input).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'post_title'   => array('type' => 'string'),
+                            'post_content' => array('type' => 'string'),
+                            'post_status'  => array('type' => 'string'),
+                            'post_author'  => array('type' => 'integer'),
+                            'post_parent'  => array('type' => 'integer'),
+                            'menu_order'   => array('type' => 'integer'),
+                            'meta_input'   => array('type' => 'object'),
+                        ),
+                        'required' => array('post_title'),
+                    ),
+                ),
+                'wp_update_page' => array(
+                    'name' => 'wp_update_page',
+                    'description' => 'Update a page by ID (post_title, post_content, post_status, post_author, post_parent, menu_order, meta_input).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'ID'           => array('type' => 'integer'),
+                            'post_title'   => array('type' => 'string'),
+                            'post_content' => array('type' => 'string'),
+                            'post_status'  => array('type' => 'string'),
+                            'post_author'  => array('type' => 'integer'),
+                            'post_parent'  => array('type' => 'integer'),
+                            'menu_order'   => array('type' => 'integer'),
+                            'meta_input'   => array('type' => 'object'),
+                        ),
+                        'required' => array('ID'),
+                    ),
+                ),
+                'wp_delete_page' => array(
+                    'name' => 'wp_delete_page',
+                    'description' => 'Delete a page by ID. Pass force=true to skip trash.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'ID'    => array('type' => 'integer'),
+                            'force' => array('type' => 'boolean'),
+                        ),
+                        'required' => array('ID'),
+                    ),
+                ),
+                
+                // Users - delete
+                'wp_delete_user' => array(
+                    'name' => 'wp_delete_user',
+                    'description' => 'Delete a user by ID. Optional: reassign (user ID to reassign posts to).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'ID'       => array('type' => 'integer'),
+                            'reassign' => array('type' => 'integer'),
+                        ),
+                        'required' => array('ID'),
+                    ),
+                ),
+                
+                // User Meta
+                'wp_get_user_meta' => array(
+                    'name' => 'wp_get_user_meta',
+                    'description' => 'Get user meta by user_id and optional meta_key. Returns all meta if key not specified.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'user_id'  => array('type' => 'integer'),
+                            'meta_key' => array('type' => 'string'),
+                        ),
+                        'required' => array('user_id'),
+                    ),
+                ),
+                'wp_update_user_meta' => array(
+                    'name' => 'wp_update_user_meta',
+                    'description' => 'Update user meta by user_id and meta_key with meta_value.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'user_id'    => array('type' => 'integer'),
+                            'meta_key'   => array('type' => 'string'),
+                            'meta_value' => array('type' => 'string'),
+                        ),
+                        'required' => array('user_id', 'meta_key', 'meta_value'),
+                    ),
+                ),
+                'wp_delete_user_meta' => array(
+                    'name' => 'wp_delete_user_meta',
+                    'description' => 'Delete user meta by user_id and meta_key.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'user_id'  => array('type' => 'integer'),
+                            'meta_key' => array('type' => 'string'),
+                        ),
+                        'required' => array('user_id', 'meta_key'),
+                    ),
+                ),
+                
+                // Categories
+                'wp_get_categories' => array(
+                    'name' => 'wp_get_categories',
+                    'description' => 'List categories (hide_empty, search, limit).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'hide_empty' => array('type' => 'boolean'),
+                            'search'     => array('type' => 'string'),
+                            'limit'      => array('type' => 'integer'),
+                        ),
+                        'required' => array(),
+                    ),
+                ),
+                'wp_create_category' => array(
+                    'name' => 'wp_create_category',
+                    'description' => 'Create a category (name required, slug, parent, description optional).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'name'        => array('type' => 'string'),
+                            'slug'        => array('type' => 'string'),
+                            'parent'      => array('type' => 'integer'),
+                            'description' => array('type' => 'string'),
+                        ),
+                        'required' => array('name'),
+                    ),
+                ),
+                'wp_update_category' => array(
+                    'name' => 'wp_update_category',
+                    'description' => 'Update a category by term_id (name, slug, parent, description).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'term_id'     => array('type' => 'integer'),
+                            'name'        => array('type' => 'string'),
+                            'slug'        => array('type' => 'string'),
+                            'parent'      => array('type' => 'integer'),
+                            'description' => array('type' => 'string'),
+                        ),
+                        'required' => array('term_id'),
+                    ),
+                ),
+                'wp_delete_category' => array(
+                    'name' => 'wp_delete_category',
+                    'description' => 'Delete a category by term_id.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'term_id' => array('type' => 'integer'),
+                        ),
+                        'required' => array('term_id'),
+                    ),
+                ),
+                
+                // Tags
+                'wp_get_tags' => array(
+                    'name' => 'wp_get_tags',
+                    'description' => 'List tags (hide_empty, search, limit).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'hide_empty' => array('type' => 'boolean'),
+                            'search'     => array('type' => 'string'),
+                            'limit'      => array('type' => 'integer'),
+                        ),
+                        'required' => array(),
+                    ),
+                ),
+                'wp_create_tag' => array(
+                    'name' => 'wp_create_tag',
+                    'description' => 'Create a tag (name required, slug, description optional).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'name'        => array('type' => 'string'),
+                            'slug'        => array('type' => 'string'),
+                            'description' => array('type' => 'string'),
+                        ),
+                        'required' => array('name'),
+                    ),
+                ),
+                'wp_update_tag' => array(
+                    'name' => 'wp_update_tag',
+                    'description' => 'Update a tag by term_id (name, slug, description).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'term_id'     => array('type' => 'integer'),
+                            'name'        => array('type' => 'string'),
+                            'slug'        => array('type' => 'string'),
+                            'description' => array('type' => 'string'),
+                        ),
+                        'required' => array('term_id'),
+                    ),
+                ),
+                'wp_delete_tag' => array(
+                    'name' => 'wp_delete_tag',
+                    'description' => 'Delete a tag by term_id.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'term_id' => array('type' => 'integer'),
+                        ),
+                        'required' => array('term_id'),
+                    ),
+                ),
+                
+                // Media
+                'wp_update_media_item' => array(
+                    'name' => 'wp_update_media_item',
+                    'description' => 'Update media item metadata (ID required, post_title, post_content, post_excerpt).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'ID'           => array('type' => 'integer'),
+                            'post_title'   => array('type' => 'string'),
+                            'post_content' => array('type' => 'string'),
+                            'post_excerpt' => array('type' => 'string'),
+                        ),
+                        'required' => array('ID'),
+                    ),
+                ),
+                'wp_delete_media_item' => array(
+                    'name' => 'wp_delete_media_item',
+                    'description' => 'Delete a media item by ID. Pass force=true to delete permanently.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'ID'    => array('type' => 'integer'),
+                            'force' => array('type' => 'boolean'),
+                        ),
+                        'required' => array('ID'),
+                    ),
+                ),
+                
+                // Menus
+                'wp_get_menus' => array(
+                    'name' => 'wp_get_menus',
+                    'description' => 'List all navigation menus (alias for wp_get_nav_menus).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => (object) array(),
+                        'required' => array(),
+                    ),
+                ),
+                'wp_get_menu' => array(
+                    'name' => 'wp_get_menu',
+                    'description' => 'Get a specific menu with its items (menu_id or menu_location required).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'menu_id'       => array('type' => 'integer'),
+                            'menu_location' => array('type' => 'string'),
+                        ),
+                        'required' => array(),
+                    ),
+                ),
+                
+                // Settings
+                'wp_get_settings' => array(
+                    'name' => 'wp_get_settings',
+                    'description' => 'Get WordPress settings. Optionally pass "keys" array to get specific options.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'keys' => array('type' => 'array', 'items' => array('type' => 'string')),
+                        ),
+                        'required' => array(),
+                    ),
+                ),
+                'wp_update_settings' => array(
+                    'name' => 'wp_update_settings',
+                    'description' => 'Update WordPress settings. Pass "settings" object with key-value pairs.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'settings' => array('type' => 'object'),
+                        ),
+                        'required' => array('settings'),
+                    ),
+                ),
+                
+                // Post Revisions
+                'wp_get_post_revisions' => array(
+                    'name' => 'wp_get_post_revisions',
+                    'description' => 'Get revisions for a post by post_id.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'post_id' => array('type' => 'integer'),
+                        ),
+                        'required' => array('post_id'),
+                    ),
+                ),
+                'wp_restore_post_revision' => array(
+                    'name' => 'wp_restore_post_revision',
+                    'description' => 'Restore a post to a specific revision by revision_id.',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'revision_id' => array('type' => 'integer'),
+                        ),
+                        'required' => array('revision_id'),
+                    ),
+                ),
+                
+                // Custom Post Types
+                'wp_get_post_types' => array(
+                    'name' => 'wp_get_post_types',
+                    'description' => 'Get all registered post types with their details (labels, capabilities, public status, etc).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => array(
+                            'public_only' => array('type' => 'boolean'),
+                        ),
+                        'required' => array(),
+                    ),
+                ),
+                
+                // Site Health
+                'wp_get_site_health' => array(
+                    'name' => 'wp_get_site_health',
+                    'description' => 'Get WordPress site health information (version, PHP, database, plugins, themes, debug mode).',
+                    'inputSchema' => array(
+                        'type' => 'object',
+                        'properties' => (object) array(),
+                        'required' => array(),
+                    ),
+                ),
             );
+
+            // Merge WooCommerce tools if available
+            if ( class_exists( 'WooCommerce' ) ) {
+                if ( class_exists( 'EasyVisualMcp_WC_Products' ) ) {
+                    $tools = array_merge( $tools, EasyVisualMcp_WC_Products::getTools() );
+                }
+                if ( class_exists( 'EasyVisualMcp_WC_Orders' ) ) {
+                    $tools = array_merge( $tools, EasyVisualMcp_WC_Orders::getTools() );
+                }
+                if ( class_exists( 'EasyVisualMcp_WC_Customers' ) ) {
+                    $tools = array_merge( $tools, EasyVisualMcp_WC_Customers::getTools() );
+                }
+                if ( class_exists( 'EasyVisualMcp_WC_Coupons' ) ) {
+                    $tools = array_merge( $tools, EasyVisualMcp_WC_Coupons::getTools() );
+                }
+                if ( class_exists( 'EasyVisualMcp_WC_System' ) ) {
+                    $tools = array_merge( $tools, EasyVisualMcp_WC_System::getTools() );
+                }
+            }
+
             $this->tools = $tools;
         }
         return $this->tools;
@@ -689,6 +1161,10 @@ class EasyVisualMcpModel {
             'wp_create_post' => 'edit_posts',
             'wp_update_post' => 'edit_posts',
             'wp_delete_post' => 'delete_posts',
+            // pages
+            'wp_create_page' => 'edit_pages',
+            'wp_update_page' => 'edit_pages',
+            'wp_delete_page' => 'delete_pages',
             // comments
             'wp_create_comment' => 'moderate_comments',
             'wp_update_comment' => 'moderate_comments',
@@ -696,19 +1172,41 @@ class EasyVisualMcpModel {
             // users
             'wp_create_user' => 'create_users',
             'wp_update_user' => 'promote_users',
+            'wp_delete_user' => 'delete_users',
+            // user meta
+            'wp_get_user_meta' => 'list_users',
+            'wp_update_user_meta' => 'edit_users',
+            'wp_delete_user_meta' => 'edit_users',
+            // post revisions
+            'wp_restore_post_revision' => 'edit_posts',
+            // site health
+            'wp_get_site_health' => 'manage_options',
+            // categories
+            'wp_create_category' => 'manage_categories',
+            'wp_update_category' => 'manage_categories',
+            'wp_delete_category' => 'manage_categories',
+            // tags
+            'wp_create_tag' => 'manage_categories',
+            'wp_update_tag' => 'manage_categories',
+            'wp_delete_tag' => 'manage_categories',
             // media
             'wp_upload_image_from_url' => 'upload_files',
+            'wp_upload_image' => 'upload_files',
+            'wp_update_media_item' => 'upload_files',
+            'wp_delete_media_item' => 'delete_posts',
             // plugins/themes
             'wp_activate_plugin' => 'activate_plugins',
             'wp_deactivate_plugin' => 'activate_plugins',
             'wp_install_plugin' => 'install_plugins',
             'wp_install_theme' => 'install_themes',
             'wp_switch_theme' => 'switch_themes',
-            // options/meta
+            // options/meta/settings
             'wp_update_option' => 'manage_options',
             'wp_delete_option' => 'manage_options',
             'wp_update_post_meta' => 'manage_options',
             'wp_delete_post_meta' => 'manage_options',
+            'wp_get_settings' => 'manage_options',
+            'wp_update_settings' => 'manage_options',
             // terms
             'wp_create_term' => 'manage_categories',
             'wp_delete_term' => 'manage_categories',
@@ -719,6 +1217,26 @@ class EasyVisualMcpModel {
             'wp_delete_nav_menu_item' => 'edit_theme_options',
             'wp_delete_nav_menu' => 'edit_theme_options',
         );
+
+        // Merge WooCommerce capabilities if available
+        if ( class_exists( 'WooCommerce' ) ) {
+            if ( class_exists( 'EasyVisualMcp_WC_Products' ) ) {
+                $map = array_merge( $map, EasyVisualMcp_WC_Products::getCapabilities() );
+            }
+            if ( class_exists( 'EasyVisualMcp_WC_Orders' ) ) {
+                $map = array_merge( $map, EasyVisualMcp_WC_Orders::getCapabilities() );
+            }
+            if ( class_exists( 'EasyVisualMcp_WC_Customers' ) ) {
+                $map = array_merge( $map, EasyVisualMcp_WC_Customers::getCapabilities() );
+            }
+            if ( class_exists( 'EasyVisualMcp_WC_Coupons' ) ) {
+                $map = array_merge( $map, EasyVisualMcp_WC_Coupons::getCapabilities() );
+            }
+            if ( class_exists( 'EasyVisualMcp_WC_System' ) ) {
+                $map = array_merge( $map, EasyVisualMcp_WC_System::getCapabilities() );
+            }
+        }
+
         return isset($map[$tool]) ? $map[$tool] : null;
     }
 
@@ -887,6 +1405,99 @@ class EasyVisualMcpModel {
                     $r['error'] = array('code' => -42603, 'message' => 'Deletion failed');
                 }
                 break;
+            
+            // Pages (son posts con post_type='page')
+            case 'wp_get_pages':
+                $pargs = array(
+                    'post_type' => 'page',
+                    'post_status' => $utils::getArrayValue($args, 'post_status', 'publish'),
+                    'numberposts' => max(1, $utils::getArrayValue($args, 'limit', 10, 1)),
+                    'orderby' => $utils::getArrayValue($args, 'orderby', 'date'),
+                    'order' => $utils::getArrayValue($args, 'order', 'DESC'),
+                );
+                if (isset($args['search'])) {
+                    $pargs['s'] = sanitize_text_field($args['search']);
+                }
+                if (isset($args['offset'])) {
+                    $pargs['offset'] = max(0, intval($args['offset']));
+                }
+                $list = array();
+                foreach (get_posts($pargs) as $p) {
+                    $list[] = array(
+                        'ID' => $p->ID,
+                        'post_title' => $p->post_title,
+                        'post_status' => $p->post_status,
+                        'post_date' => $p->post_date,
+                        'post_modified' => $p->post_modified,
+                        'post_author' => $p->post_author,
+                        'post_parent' => $p->post_parent,
+                        'menu_order' => $p->menu_order,
+                    );
+                }
+                $addResultText($r, wp_json_encode($list, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_create_page':
+                $pdata = array(
+                    'post_type' => 'page',
+                    'post_title' => $cleanHtml($utils::getArrayValue($args, 'post_title', '')),
+                    'post_content' => $cleanHtml($utils::getArrayValue($args, 'post_content', '')),
+                    'post_status' => $utils::getArrayValue($args, 'post_status', 'draft'),
+                );
+                if (!empty($args['post_author'])) {
+                    $pdata['post_author'] = intval($args['post_author']);
+                }
+                if (isset($args['post_parent'])) {
+                    $pdata['post_parent'] = intval($args['post_parent']);
+                }
+                if (isset($args['menu_order'])) {
+                    $pdata['menu_order'] = intval($args['menu_order']);
+                }
+                if (!empty($args['meta_input']) && is_array($args['meta_input'])) {
+                    $pdata['meta_input'] = $args['meta_input'];
+                }
+                $u = wp_insert_post($pdata, true);
+                if (is_wp_error($u)) {
+                    $r['error'] = array('code' => -42603, 'message' => $u->get_error_message());
+                } else {
+                    $addResultText($r, 'Page #' . $u . ' created');
+                }
+                break;
+            case 'wp_update_page':
+                if (empty($args['ID'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'ID required');
+                    break;
+                }
+                $pdata = array('ID' => intval($args['ID']), 'post_type' => 'page');
+                foreach (array('post_title', 'post_content', 'post_status', 'post_author', 'post_parent', 'menu_order') as $k) {
+                    if (isset($args[$k])) {
+                        $pdata[$k] = in_array($k, array('post_title', 'post_content'), true) ? $cleanHtml($args[$k]) : $args[$k];
+                    }
+                }
+                $u = wp_update_post($pdata, true);
+                if (is_wp_error($u)) {
+                    $r['error'] = array('code' => -42603, 'message' => $u->get_error_message());
+                    break;
+                }
+                if (!empty($args['meta_input']) && is_array($args['meta_input'])) {
+                    foreach ($args['meta_input'] as $k => $v) {
+                        update_post_meta($u, sanitize_key($k), maybe_serialize($v));
+                    }
+                }
+                $addResultText($r, 'Page #' . $u . ' updated');
+                break;
+            case 'wp_delete_page':
+                if (empty($args['ID'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'ID required');
+                    break;
+                }
+                $del = wp_delete_post(intval($args['ID']), !empty($args['force']));
+                if ($del) {
+                    $addResultText($r, 'Page #' . $args['ID'] . ' deleted');
+                } else {
+                    $r['error'] = array('code' => -42603, 'message' => 'Deletion failed');
+                }
+                break;
+            
             case 'wp_get_comments':
                 $cargs = array(
                     'post_id' => $utils::getArrayValue($args, 'post_id', 0, 1),
@@ -1032,6 +1643,84 @@ class EasyVisualMcpModel {
                     $addResultText($r, 'User #' . $u . ' updated');
                 }
                 break;
+            case 'wp_delete_user':
+                if (empty($args['ID'])) {
+                    $r['error'] = array('code' => -42602, 'message' => 'ID required');
+                    break;
+                }
+                if (!function_exists('wp_delete_user')) {
+                    require_once ABSPATH . 'wp-admin/includes/user.php';
+                }
+                $reassign = isset($args['reassign']) ? intval($args['reassign']) : null;
+                $deleted = wp_delete_user(intval($args['ID']), $reassign);
+                if ($deleted) {
+                    $addResultText($r, 'User #' . $args['ID'] . ' deleted');
+                } else {
+                    $r['error'] = array('code' => -42603, 'message' => 'User deletion failed');
+                }
+                break;
+                
+            // User Meta
+            case 'wp_get_user_meta':
+                $user_id = intval($utils::getArrayValue($args, 'user_id', 0));
+                if (empty($user_id)) {
+                    $r['error'] = array('code' => -42602, 'message' => 'user_id required');
+                    break;
+                }
+                
+                $meta_key = $utils::getArrayValue($args, 'meta_key', '');
+                
+                if (!empty($meta_key)) {
+                    $value = get_user_meta($user_id, sanitize_key($meta_key), true);
+                    $addResultText($r, 'User meta ' . $meta_key . ': ' . wp_json_encode($value, JSON_PRETTY_PRINT));
+                } else {
+                    // Get all meta
+                    $all_meta = get_user_meta($user_id);
+                    $cleaned = array();
+                    foreach ($all_meta as $key => $values) {
+                        $cleaned[$key] = count($values) === 1 ? $values[0] : $values;
+                    }
+                    $addResultText($r, 'All user meta for user #' . $user_id . ': ' . wp_json_encode($cleaned, JSON_PRETTY_PRINT));
+                }
+                break;
+                
+            case 'wp_update_user_meta':
+                $user_id = intval($utils::getArrayValue($args, 'user_id', 0));
+                $meta_key = $utils::getArrayValue($args, 'meta_key', '');
+                $meta_value = $utils::getArrayValue($args, 'meta_value', '');
+                
+                if (empty($user_id) || empty($meta_key)) {
+                    $r['error'] = array('code' => -42602, 'message' => 'user_id and meta_key required');
+                    break;
+                }
+                
+                $updated = update_user_meta($user_id, sanitize_key($meta_key), $meta_value);
+                
+                if ($updated !== false) {
+                    $addResultText($r, 'User meta updated for user #' . $user_id . ', key: ' . $meta_key);
+                } else {
+                    $r['error'] = array('code' => -42603, 'message' => 'Failed to update user meta');
+                }
+                break;
+                
+            case 'wp_delete_user_meta':
+                $user_id = intval($utils::getArrayValue($args, 'user_id', 0));
+                $meta_key = $utils::getArrayValue($args, 'meta_key', '');
+                
+                if (empty($user_id) || empty($meta_key)) {
+                    $r['error'] = array('code' => -42602, 'message' => 'user_id and meta_key required');
+                    break;
+                }
+                
+                $deleted = delete_user_meta($user_id, sanitize_key($meta_key));
+                
+                if ($deleted) {
+                    $addResultText($r, 'User meta deleted for user #' . $user_id . ', key: ' . $meta_key);
+                } else {
+                    $r['error'] = array('code' => -42603, 'message' => 'Failed to delete user meta');
+                }
+                break;
+                
             case 'wp_list_plugins':
                 if (!function_exists('get_plugins')) {
                     require_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -1083,28 +1772,24 @@ class EasyVisualMcpModel {
                 }
                 // Incluir dependencias necesarias
                 require_once ABSPATH . 'wp-admin/includes/file.php';
+                require_once ABSPATH . 'wp-admin/includes/class-automatic-upgrader-skin.php';
                 require_once ABSPATH . 'wp-admin/includes/plugin-install.php';
                 require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
                 
                 // Inicializar WP_Filesystem
-                if (!function_exists('request_filesystem_credentials')) {
-                    $r['error'] = array('code' => -42604, 'message' => 'Filesystem credentials function not available');
-                    break;
-                }
-                $creds = request_filesystem_credentials('', '', false, false, null);
-                if (!$creds) {
-                    $r['error'] = array('code' => -42605, 'message' => 'Filesystem credentials required');
-                    break;
-                }
+                $creds = request_filesystem_credentials(site_url() . '/wp-admin/', '', false, false, array());
                 if (!WP_Filesystem($creds)) {
-                    $r['error'] = array('code' => -42606, 'message' => 'Failed to initialize filesystem');
+                    $r['error'] = array('code' => -42606, 'message' => 'Failed to initialize filesystem. Check permissions or wp-config.php for FS_METHOD.');
                     break;
                 }
                 
-                $upgrader = new Plugin_Upgrader();
+                $skin = new Automatic_Upgrader_Skin();
+                $upgrader = new Plugin_Upgrader($skin);
                 $result = $upgrader->install($args['url']);
                 if (is_wp_error($result)) {
                     $r['error'] = array('code' => $result->get_error_code(), 'message' => $result->get_error_message());
+                } elseif ($result === false) {
+                    $r['error'] = array('code' => -42607, 'message' => 'Installation failed without specific error');
                 } else {
                     $addResultText($r, 'Plugin installed successfully from ' . $args['url']);
                 }
@@ -1120,28 +1805,24 @@ class EasyVisualMcpModel {
                 }
                 // Incluir dependencias necesarias
                 require_once ABSPATH . 'wp-admin/includes/file.php';
+                require_once ABSPATH . 'wp-admin/includes/class-automatic-upgrader-skin.php';
                 require_once ABSPATH . 'wp-admin/includes/theme-install.php';
                 require_once ABSPATH . 'wp-admin/includes/class-wp-upgrader.php';
                 
                 // Inicializar WP_Filesystem
-                if (!function_exists('request_filesystem_credentials')) {
-                    $r['error'] = array('code' => -42604, 'message' => 'Filesystem credentials function not available');
-                    break;
-                }
-                $creds = request_filesystem_credentials('', '', false, false, null);
-                if (!$creds) {
-                    $r['error'] = array('code' => -42605, 'message' => 'Filesystem credentials required');
-                    break;
-                }
+                $creds = request_filesystem_credentials(site_url() . '/wp-admin/', '', false, false, array());
                 if (!WP_Filesystem($creds)) {
-                    $r['error'] = array('code' => -42606, 'message' => 'Failed to initialize filesystem');
+                    $r['error'] = array('code' => -42606, 'message' => 'Failed to initialize filesystem. Check permissions or wp-config.php for FS_METHOD.');
                     break;
                 }
                 
-                $upgrader = new Theme_Upgrader();
+                $skin = new Automatic_Upgrader_Skin();
+                $upgrader = new Theme_Upgrader($skin);
                 $result = $upgrader->install($args['url']);
                 if (is_wp_error($result)) {
                     $r['error'] = array('code' => $result->get_error_code(), 'message' => $result->get_error_message());
+                } elseif ($result === false) {
+                    $r['error'] = array('code' => -42607, 'message' => 'Installation failed without specific error');
                 } else {
                     $addResultText($r, 'Theme installed successfully from ' . $args['url']);
                 }
@@ -1191,20 +1872,167 @@ class EasyVisualMcpModel {
                 break;
             case 'wp_upload_image_from_url':
                 $url = esc_url_raw($utils::getArrayValue($args, 'url'));
+                error_log('[EVMCP] wp_upload_image_from_url: URL received = ' . $url);
+                
                 if (!$url) { $r['error'] = array('code' => -42602, 'message' => 'url required'); break; }
                 if (!current_user_can('upload_files')) { $r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions to upload files'); break; }
+                
                 require_once ABSPATH . 'wp-admin/includes/file.php';
                 require_once ABSPATH . 'wp-admin/includes/media.php';
                 require_once ABSPATH . 'wp-admin/includes/image.php';
+                
+                // Temporarily allow all MIME types for images
+                add_filter('upload_mimes', function($mimes) {
+                    $mimes['jpg|jpeg|jpe'] = 'image/jpeg';
+                    $mimes['png'] = 'image/png';
+                    $mimes['gif'] = 'image/gif';
+                    $mimes['webp'] = 'image/webp';
+                    return $mimes;
+                });
+                
+                error_log('[EVMCP] wp_upload_image_from_url: Starting download...');
                 $tmp = download_url($url);
-                if (is_wp_error($tmp)) { $r['error'] = array('code' => 'download_error', 'message' => $tmp->get_error_message()); break; }
+                
+                if (is_wp_error($tmp)) { 
+                    error_log('[EVMCP] wp_upload_image_from_url: Download error = ' . $tmp->get_error_message());
+                    $r['error'] = array('code' => 'download_error', 'message' => $tmp->get_error_message()); 
+                    break; 
+                }
+                
+                error_log('[EVMCP] wp_upload_image_from_url: Downloaded to temp file = ' . $tmp);
+                
+                // Get file extension from URL or detect from downloaded file
                 $file = array();
-                $file['name'] = wp_basename($url);
+                $basename = wp_basename($url);
+                error_log('[EVMCP] wp_upload_image_from_url: Original basename = ' . $basename);
+                
+                $parsed_url = parse_url($url);
+                $path = isset($parsed_url['path']) ? $parsed_url['path'] : '';
+                
+                // If URL doesn't have a clear extension (e.g., Unsplash URLs), detect from file
+                if (!preg_match('/\.(jpg|jpeg|png|gif|webp)$/i', $basename)) {
+                    error_log('[EVMCP] wp_upload_image_from_url: No extension in URL, detecting MIME type...');
+                    
+                    // Try to detect MIME type from file content
+                    if (function_exists('mime_content_type')) {
+                        $mime = mime_content_type($tmp);
+                    } else {
+                        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                        $mime = finfo_file($finfo, $tmp);
+                        finfo_close($finfo);
+                    }
+                    
+                    error_log('[EVMCP] wp_upload_image_from_url: Detected MIME type = ' . $mime);
+                    
+                    $ext = 'jpg'; // default
+                    if (strpos($mime, 'png') !== false) $ext = 'png';
+                    else if (strpos($mime, 'gif') !== false) $ext = 'gif';
+                    else if (strpos($mime, 'webp') !== false) $ext = 'webp';
+                    
+                    $basename = 'image-' . time() . '.' . $ext;
+                    error_log('[EVMCP] wp_upload_image_from_url: New basename = ' . $basename);
+                }
+                
+                $file['name'] = $basename;
                 $file['tmp_name'] = $tmp;
+                
+                // Force proper MIME type
+                $file_info = wp_check_filetype($basename);
+                $file['type'] = $file_info['type'];
+                
+                error_log('[EVMCP] wp_upload_image_from_url: File array = ' . print_r($file, true));
+                error_log('[EVMCP] wp_upload_image_from_url: Calling media_handle_sideload...');
+                
                 $att_id = media_handle_sideload($file, 0);
-                if (is_wp_error($att_id)) { @unlink($file['tmp_name']); $r['error'] = array('code' => 'sideload_error', 'message' => $att_id->get_error_message()); break; }
+                
+                if (is_wp_error($att_id)) { 
+                    error_log('[EVMCP] wp_upload_image_from_url: Sideload error = ' . $att_id->get_error_message());
+                    error_log('[EVMCP] wp_upload_image_from_url: Sideload error data = ' . print_r($att_id->get_error_data(), true));
+                    @unlink($file['tmp_name']); 
+                    $r['error'] = array('code' => 'sideload_error', 'message' => $att_id->get_error_message()); 
+                    break; 
+                }
+                
+                error_log('[EVMCP] wp_upload_image_from_url: Success! Attachment ID = ' . $att_id);
+                
                 $att_url = wp_get_attachment_url($att_id);
-                $addResultText($r, 'Imagen subida correctamente. ID: ' . $att_id . ', URL: ' . $att_url);
+                
+                // Set alt text and title if provided
+                $alt_text = sanitize_text_field($utils::getArrayValue($args, 'alt_text', ''));
+                $title = sanitize_text_field($utils::getArrayValue($args, 'title', ''));
+                if ($alt_text) update_post_meta($att_id, '_wp_attachment_image_alt', $alt_text);
+                if ($title) wp_update_post(array('ID' => $att_id, 'post_title' => $title));
+                
+                $addResultText($r, 'Image uploaded successfully. Attachment ID: ' . $att_id . ', URL: ' . $att_url);
+                break;
+            case 'wp_upload_image':
+                $image_data = $utils::getArrayValue($args, 'image_data');
+                $filename = sanitize_file_name($utils::getArrayValue($args, 'filename', 'image.png'));
+                $post_id = intval($utils::getArrayValue($args, 'post_id', 0));
+                
+                if (!$image_data) { $r['error'] = array('code' => -42602, 'message' => 'image_data required'); break; }
+                if (!current_user_can('upload_files')) { $r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions to upload files'); break; }
+                
+                // Decode base64 (remove data:image/png;base64, prefix if present)
+                $image_data = preg_replace('/^data:image\/\w+;base64,/', '', $image_data);
+                $decoded = base64_decode($image_data, true);
+                
+                if ($decoded === false) { $r['error'] = array('code' => -42602, 'message' => 'Invalid base64 data'); break; }
+                
+                require_once ABSPATH . 'wp-admin/includes/file.php';
+                require_once ABSPATH . 'wp-admin/includes/media.php';
+                require_once ABSPATH . 'wp-admin/includes/image.php';
+                
+                // Save to temp file
+                $upload_dir = wp_upload_dir();
+                $temp_file = $upload_dir['path'] . '/' . wp_unique_filename($upload_dir['path'], $filename);
+                
+                if (file_put_contents($temp_file, $decoded) === false) {
+                    $r['error'] = array('code' => 'write_error', 'message' => 'Failed to write file');
+                    break;
+                }
+                
+                // Create attachment
+                $file_array = array(
+                    'name' => $filename,
+                    'tmp_name' => $temp_file,
+                );
+                
+                $att_id = media_handle_sideload($file_array, $post_id);
+                
+                if (is_wp_error($att_id)) {
+                    @unlink($temp_file);
+                    $r['error'] = array('code' => 'upload_error', 'message' => $att_id->get_error_message());
+                    break;
+                }
+                
+                // Set alt text and title if provided
+                $alt_text = sanitize_text_field($utils::getArrayValue($args, 'alt_text', ''));
+                $title = sanitize_text_field($utils::getArrayValue($args, 'title', ''));
+                if ($alt_text) update_post_meta($att_id, '_wp_attachment_image_alt', $alt_text);
+                if ($title) wp_update_post(array('ID' => $att_id, 'post_title' => $title));
+                
+                $att_url = wp_get_attachment_url($att_id);
+                $addResultText($r, 'Image uploaded successfully. Attachment ID: ' . $att_id . ', URL: ' . $att_url);
+                break;
+            case 'wp_update_media_item':
+                if (empty($args['ID'])) { $r['error'] = array('code' => -42602, 'message' => 'ID required'); break; }
+                $att = get_post(intval($args['ID']));
+                if (!$att || 'attachment' !== $att->post_type) { $r['error'] = array('code' => -42600, 'message' => 'Media not found'); break; }
+                $upd = array('ID' => intval($args['ID']));
+                if (isset($args['post_title'])) { $upd['post_title'] = sanitize_text_field($args['post_title']); }
+                if (isset($args['post_content'])) { $upd['post_content'] = sanitize_textarea_field($args['post_content']); }
+                if (isset($args['post_excerpt'])) { $upd['post_excerpt'] = sanitize_textarea_field($args['post_excerpt']); }
+                $result = wp_update_post($upd, true);
+                if (is_wp_error($result)) { $r['error'] = array('code' => $result->get_error_code(), 'message' => $result->get_error_message()); } else { $addResultText($r, 'Media item #' . $args['ID'] . ' updated'); }
+                break;
+            case 'wp_delete_media_item':
+                if (empty($args['ID'])) { $r['error'] = array('code' => -42602, 'message' => 'ID required'); break; }
+                $att = get_post(intval($args['ID']));
+                if (!$att || 'attachment' !== $att->post_type) { $r['error'] = array('code' => -42600, 'message' => 'Media not found'); break; }
+                $force = isset($args['force']) ? (bool)$args['force'] : false;
+                $deleted = wp_delete_attachment(intval($args['ID']), $force);
+                if ($deleted) { $addResultText($r, 'Media item #' . $args['ID'] . ' deleted'); } else { $r['error'] = array('code' => -42603, 'message' => 'Media deletion failed'); }
                 break;
             case 'wp_get_taxonomies':
                 $tax = get_taxonomies(array(), 'objects');
@@ -1234,12 +2062,132 @@ class EasyVisualMcpModel {
                 $done = wp_delete_term($term_id, $taxonomy);
                 if (is_wp_error($done)) { $r['error'] = array('code' => $done->get_error_code(), 'message' => $done->get_error_message()); } else { $addResultText($r, 'Term deleted'); }
                 break;
+            
+            // Categories (son terms con taxonomy='category')
+            case 'wp_get_categories':
+                $cargs = array(
+                    'taxonomy' => 'category',
+                    'hide_empty' => isset($args['hide_empty']) ? (bool)$args['hide_empty'] : false,
+                    'number' => max(1, $utils::getArrayValue($args, 'limit', 100, 1)),
+                );
+                if (isset($args['search'])) {
+                    $cargs['search'] = sanitize_text_field($args['search']);
+                }
+                $cats = get_terms($cargs);
+                if (is_wp_error($cats)) { $r['error'] = array('code' => $cats->get_error_code(), 'message' => $cats->get_error_message()); break; }
+                $list = array();
+                foreach ($cats as $cat) {
+                    $list[] = array('term_id' => $cat->term_id, 'name' => $cat->name, 'slug' => $cat->slug, 'count' => $cat->count, 'parent' => $cat->parent);
+                }
+                $addResultText($r, wp_json_encode($list, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_create_category':
+                if (empty($args['name'])) { $r['error'] = array('code' => -42602, 'message' => 'name required'); break; }
+                $cargs = array('name' => sanitize_text_field($args['name']));
+                if (isset($args['slug'])) { $cargs['slug'] = sanitize_title($args['slug']); }
+                if (isset($args['parent'])) { $cargs['parent'] = intval($args['parent']); }
+                if (isset($args['description'])) { $cargs['description'] = sanitize_textarea_field($args['description']); }
+                $result = wp_insert_term($cargs['name'], 'category', $cargs);
+                if (is_wp_error($result)) { $r['error'] = array('code' => $result->get_error_code(), 'message' => $result->get_error_message()); } else { $addResultText($r, 'Category created with ID ' . $result['term_id']); }
+                break;
+            case 'wp_update_category':
+                if (empty($args['term_id'])) { $r['error'] = array('code' => -42602, 'message' => 'term_id required'); break; }
+                $cargs = array();
+                if (isset($args['name'])) { $cargs['name'] = sanitize_text_field($args['name']); }
+                if (isset($args['slug'])) { $cargs['slug'] = sanitize_title($args['slug']); }
+                if (isset($args['parent'])) { $cargs['parent'] = intval($args['parent']); }
+                if (isset($args['description'])) { $cargs['description'] = sanitize_textarea_field($args['description']); }
+                $result = wp_update_term(intval($args['term_id']), 'category', $cargs);
+                if (is_wp_error($result)) { $r['error'] = array('code' => $result->get_error_code(), 'message' => $result->get_error_message()); } else { $addResultText($r, 'Category updated'); }
+                break;
+            case 'wp_delete_category':
+                if (empty($args['term_id'])) { $r['error'] = array('code' => -42602, 'message' => 'term_id required'); break; }
+                $done = wp_delete_term(intval($args['term_id']), 'category');
+                if (is_wp_error($done)) { $r['error'] = array('code' => $done->get_error_code(), 'message' => $done->get_error_message()); } else { $addResultText($r, 'Category deleted'); }
+                break;
+            
+            // Tags (son terms con taxonomy='post_tag')
+            case 'wp_get_tags':
+                $targs = array(
+                    'taxonomy' => 'post_tag',
+                    'hide_empty' => isset($args['hide_empty']) ? (bool)$args['hide_empty'] : false,
+                    'number' => max(1, $utils::getArrayValue($args, 'limit', 100, 1)),
+                );
+                if (isset($args['search'])) {
+                    $targs['search'] = sanitize_text_field($args['search']);
+                }
+                $tags = get_terms($targs);
+                if (is_wp_error($tags)) { $r['error'] = array('code' => $tags->get_error_code(), 'message' => $tags->get_error_message()); break; }
+                $list = array();
+                foreach ($tags as $tag) {
+                    $list[] = array('term_id' => $tag->term_id, 'name' => $tag->name, 'slug' => $tag->slug, 'count' => $tag->count);
+                }
+                $addResultText($r, wp_json_encode($list, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_create_tag':
+                if (empty($args['name'])) { $r['error'] = array('code' => -42602, 'message' => 'name required'); break; }
+                $targs = array('name' => sanitize_text_field($args['name']));
+                if (isset($args['slug'])) { $targs['slug'] = sanitize_title($args['slug']); }
+                if (isset($args['description'])) { $targs['description'] = sanitize_textarea_field($args['description']); }
+                $result = wp_insert_term($targs['name'], 'post_tag', $targs);
+                if (is_wp_error($result)) { $r['error'] = array('code' => $result->get_error_code(), 'message' => $result->get_error_message()); } else { $addResultText($r, 'Tag created with ID ' . $result['term_id']); }
+                break;
+            case 'wp_update_tag':
+                if (empty($args['term_id'])) { $r['error'] = array('code' => -42602, 'message' => 'term_id required'); break; }
+                $targs = array();
+                if (isset($args['name'])) { $targs['name'] = sanitize_text_field($args['name']); }
+                if (isset($args['slug'])) { $targs['slug'] = sanitize_title($args['slug']); }
+                if (isset($args['description'])) { $targs['description'] = sanitize_textarea_field($args['description']); }
+                $result = wp_update_term(intval($args['term_id']), 'post_tag', $targs);
+                if (is_wp_error($result)) { $r['error'] = array('code' => $result->get_error_code(), 'message' => $result->get_error_message()); } else { $addResultText($r, 'Tag updated'); }
+                break;
+            case 'wp_delete_tag':
+                if (empty($args['term_id'])) { $r['error'] = array('code' => -42602, 'message' => 'term_id required'); break; }
+                $done = wp_delete_term(intval($args['term_id']), 'post_tag');
+                if (is_wp_error($done)) { $r['error'] = array('code' => $done->get_error_code(), 'message' => $done->get_error_message()); } else { $addResultText($r, 'Tag deleted'); }
+                break;
+            
             case 'wp_get_nav_menus':
+            case 'wp_get_menus':  // Alias
                 $menus = wp_get_nav_menus();
                 $out = array();
                 foreach ($menus as $menu) {
                     $out[] = array('term_id' => $menu->term_id, 'name' => $menu->name, 'slug' => $menu->slug);
                 }
+                $addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_get_menu':
+                $menu_id = isset($args['menu_id']) ? intval($args['menu_id']) : 0;
+                $menu_location = isset($args['menu_location']) ? sanitize_text_field($args['menu_location']) : '';
+                
+                if ($menu_location) {
+                    $locations = get_nav_menu_locations();
+                    $menu_id = isset($locations[$menu_location]) ? $locations[$menu_location] : 0;
+                }
+                
+                if (!$menu_id) { $r['error'] = array('code' => -42602, 'message' => 'menu_id or menu_location required'); break; }
+                
+                $menu = wp_get_nav_menu_object($menu_id);
+                if (!$menu) { $r['error'] = array('code' => -42600, 'message' => 'Menu not found'); break; }
+                
+                $items = wp_get_nav_menu_items($menu_id);
+                $menu_items = array();
+                if ($items) {
+                    foreach ($items as $item) {
+                        $menu_items[] = array(
+                            'ID' => $item->ID,
+                            'title' => $item->title,
+                            'url' => $item->url,
+                            'menu_order' => $item->menu_order,
+                            'parent' => $item->menu_item_parent,
+                            'type' => $item->type,
+                            'object' => $item->object,
+                            'object_id' => $item->object_id,
+                        );
+                    }
+                }
+                
+                $out = array('term_id' => $menu->term_id, 'name' => $menu->name, 'slug' => $menu->slug, 'items' => $menu_items);
                 $addResultText($r, wp_json_encode($out, JSON_PRETTY_PRINT));
                 break;
             case 'wp_create_nav_menu':
@@ -1444,7 +2392,221 @@ class EasyVisualMcpModel {
                     $addResultText($r, 'No se eliminó la opción (' . $option . ')');
                 }
                 break;
+            case 'wp_get_settings':
+                if (!current_user_can('manage_options')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para leer configuración.');
+                    break;
+                }
+                $keys = isset($args['keys']) && is_array($args['keys']) ? $args['keys'] : array();
+                if (empty($keys)) {
+                    // Return common settings if no keys specified
+                    $keys = array('blogname', 'blogdescription', 'siteurl', 'home', 'admin_email', 'users_can_register', 'default_role', 'timezone_string', 'date_format', 'time_format', 'posts_per_page', 'comments_per_page');
+                }
+                $settings = array();
+                foreach ($keys as $key) {
+                    $settings[$key] = get_option(sanitize_text_field($key));
+                }
+                $addResultText($r, wp_json_encode($settings, JSON_PRETTY_PRINT));
+                break;
+            case 'wp_update_settings':
+                if (!current_user_can('manage_options')) {
+                    $r['error'] = array('code' => 'permission_denied', 'message' => 'No tienes permisos para actualizar configuración.');
+                    break;
+                }
+                $settings = isset($args['settings']) && is_array($args['settings']) ? $args['settings'] : array();
+                if (empty($settings)) {
+                    $r['error'] = array('code' => 'invalid_params', 'message' => 'Falta el parámetro settings (debe ser un objeto con pares clave-valor).');
+                    break;
+                }
+                $updated = array();
+                foreach ($settings as $key => $value) {
+                    $key = sanitize_text_field($key);
+                    $result = update_option($key, $value);
+                    $updated[$key] = $result;
+                }
+                $addResultText($r, 'Configuración actualizada: ' . wp_json_encode($updated, JSON_PRETTY_PRINT));
+                break;
+                
+            // Post Revisions
+            case 'wp_get_post_revisions':
+                $post_id = intval($utils::getArrayValue($args, 'post_id', 0));
+                if (empty($post_id)) {
+                    $r['error'] = array('code' => -42602, 'message' => 'post_id required');
+                    break;
+                }
+                
+                $revisions = wp_get_post_revisions($post_id);
+                $result = array();
+                
+                foreach ($revisions as $revision) {
+                    $result[] = array(
+                        'id' => $revision->ID,
+                        'post_author' => $revision->post_author,
+                        'post_date' => $revision->post_date,
+                        'post_title' => $revision->post_title,
+                        'post_modified' => $revision->post_modified,
+                    );
+                }
+                
+                $addResultText($r, 'Found ' . count($result) . ' revisions: ' . wp_json_encode($result, JSON_PRETTY_PRINT));
+                break;
+                
+            case 'wp_restore_post_revision':
+                $revision_id = intval($utils::getArrayValue($args, 'revision_id', 0));
+                if (empty($revision_id)) {
+                    $r['error'] = array('code' => -42602, 'message' => 'revision_id required');
+                    break;
+                }
+                
+                $restored = wp_restore_post_revision($revision_id);
+                
+                if ($restored) {
+                    $addResultText($r, 'Post restored to revision #' . $revision_id . ', restored post ID: ' . $restored);
+                } else {
+                    $r['error'] = array('code' => -42603, 'message' => 'Failed to restore revision');
+                }
+                break;
+                
+            // Custom Post Types
+            case 'wp_get_post_types':
+                $public_only = (bool) $utils::getArrayValue($args, 'public_only', false);
+                
+                $args_query = array();
+                if ($public_only) {
+                    $args_query['public'] = true;
+                }
+                
+                $post_types = get_post_types($args_query, 'objects');
+                $result = array();
+                
+                foreach ($post_types as $post_type) {
+                    $result[] = array(
+                        'name' => $post_type->name,
+                        'label' => $post_type->label,
+                        'labels' => (array) $post_type->labels,
+                        'public' => $post_type->public,
+                        'hierarchical' => $post_type->hierarchical,
+                        'has_archive' => $post_type->has_archive,
+                        'supports' => get_all_post_type_supports($post_type->name),
+                        'taxonomies' => get_object_taxonomies($post_type->name),
+                        'rest_enabled' => $post_type->show_in_rest,
+                    );
+                }
+                
+                $addResultText($r, 'Found ' . count($result) . ' post types: ' . wp_json_encode($result, JSON_PRETTY_PRINT));
+                break;
+                
+            // Site Health
+            case 'wp_get_site_health':
+                global $wpdb;
+                
+                $health = array(
+                    'wordpress' => array(
+                        'version' => get_bloginfo('version'),
+                        'site_url' => get_site_url(),
+                        'home_url' => get_home_url(),
+                        'is_multisite' => is_multisite(),
+                        'language' => get_bloginfo('language'),
+                    ),
+                    'server' => array(
+                        'php_version' => phpversion(),
+                        'server_software' => $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown',
+                        'https' => is_ssl(),
+                        'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown',
+                    ),
+                    'database' => array(
+                        'extension' => $wpdb->use_mysqli ? 'mysqli' : 'mysql',
+                        'server_version' => $wpdb->db_version(),
+                        'client_version' => $wpdb->db_server_info(),
+                        'database_name' => DB_NAME,
+                        'database_user' => DB_USER,
+                        'database_host' => DB_HOST,
+                        'database_charset' => DB_CHARSET,
+                        'table_prefix' => $wpdb->prefix,
+                    ),
+                    'theme' => array(
+                        'name' => wp_get_theme()->get('Name'),
+                        'version' => wp_get_theme()->get('Version'),
+                        'author' => wp_get_theme()->get('Author'),
+                        'parent_theme' => wp_get_theme()->get('Template'),
+                    ),
+                    'plugins' => array(
+                        'active' => count(get_option('active_plugins', array())),
+                        'total' => count(get_plugins()),
+                    ),
+                    'debug' => array(
+                        'wp_debug' => defined('WP_DEBUG') && WP_DEBUG,
+                        'wp_debug_log' => defined('WP_DEBUG_LOG') && WP_DEBUG_LOG,
+                        'wp_debug_display' => defined('WP_DEBUG_DISPLAY') && WP_DEBUG_DISPLAY,
+                        'script_debug' => defined('SCRIPT_DEBUG') && SCRIPT_DEBUG,
+                    ),
+                    'constants' => array(
+                        'wp_memory_limit' => WP_MEMORY_LIMIT,
+                        'wp_max_memory_limit' => WP_MAX_MEMORY_LIMIT,
+                        'wp_content_dir' => WP_CONTENT_DIR,
+                        'wp_plugin_dir' => WP_PLUGIN_DIR,
+                        'uploads_dir' => wp_upload_dir()['basedir'] ?? 'Unknown',
+                    ),
+                );
+                
+                // Add WooCommerce info if active
+                if (class_exists('WooCommerce')) {
+                    $health['woocommerce'] = array(
+                        'version' => WC()->version,
+                        'database_version' => get_option('woocommerce_db_version'),
+                    );
+                }
+                
+                $addResultText($r, 'Site health: ' . wp_json_encode($health, JSON_PRETTY_PRINT));
+                break;
+                
             default:
+                // Try to route to WooCommerce modules if tool starts with wc_
+                if ( strpos( $tool, 'wc_' ) === 0 && class_exists( 'WooCommerce' ) ) {
+                    $dispatched = false;
+                    
+                    // Try WC Products module
+                    if ( class_exists( 'EasyVisualMcp_WC_Products' ) ) {
+                        $result = EasyVisualMcp_WC_Products::dispatch( $tool, $args, $r, $addResultText, $utils );
+                        if ( $result !== null ) {
+                            return $result;
+                        }
+                    }
+                    
+                    // Try WC Orders module
+                    if ( class_exists( 'EasyVisualMcp_WC_Orders' ) ) {
+                        $result = EasyVisualMcp_WC_Orders::dispatch( $tool, $args, $r, $addResultText, $utils );
+                        if ( $result !== null ) {
+                            return $result;
+                        }
+                    }
+                    
+                    // Try WC Customers module
+                    if ( class_exists( 'EasyVisualMcp_WC_Customers' ) ) {
+                        $result = EasyVisualMcp_WC_Customers::dispatch( $tool, $args, $r, $addResultText, $utils );
+                        if ( $result !== null ) {
+                            return $result;
+                        }
+                    }
+                    
+                    // Try WC Coupons module
+                    if ( class_exists( 'EasyVisualMcp_WC_Coupons' ) ) {
+                        $result = EasyVisualMcp_WC_Coupons::dispatch( $tool, $args, $r, $addResultText, $utils );
+                        if ( $result !== null ) {
+                            return $result;
+                        }
+                    }
+                    
+                    // Try WC System module
+                    if ( class_exists( 'EasyVisualMcp_WC_System' ) ) {
+                        $result = EasyVisualMcp_WC_System::dispatch( $tool, $args, $r, $addResultText, $utils );
+                        if ( $result !== null ) {
+                            return $result;
+                        }
+                    }
+                }
+                
+                // If not handled by any WooCommerce module or unknown tool
                 $r['error'] = array('code' => -42609, 'message' => 'Unknown tool');
         }
         return $r;

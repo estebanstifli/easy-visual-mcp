@@ -1,9 +1,0 @@
-{
-  "jsonrpc": "2.0",
-  "id": 4,
-  "method": "tools/call",
-  "params": {
-    "tool": "wp_get_taxonomies",
-    "args": {}
-  }
-}

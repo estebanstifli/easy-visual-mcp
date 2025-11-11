@@ -1,60 +1,195 @@
 # Copilot Instructions for Easy Visual MCP
 
 ## Project Overview
-- **Easy Visual MCP** is a WordPress plugin that exposes WordPress management tools via a JSON-RPC endpoint, designed for integration with LLMs (e.g., ChatGPT) and automation clients.
-- The plugin provides endpoints for tool discovery (`tools/list`), tool execution (`tools/call`), and supports both HTTP POST and SSE (Server-Sent Events) for real-time streaming.
-- All endpoints are registered under `/wp-json/easy-visual-mcp/v1/`.
+**Easy Visual MCP** is a WordPress plugin exposing WordPress management via JSON-RPC 2.0, designed for LLM integration (ChatGPT, Claude, etc.). It provides tool discovery (`tools/list`), execution (`tools/call`), and SSE streaming at `/wp-json/easy-visual-mcp/v1/`.
 
-## Architecture & Key Files
-- **Entry point:** `easy-visual-mcp.php` (loads all helpers, models, and the main module)
-- **Main logic:** `mod.php` (REST API registration, authentication, JSON-RPC dispatch, SSE streaming, admin UI)
-- **Tool definitions & dispatch:** `models/model.php` (`EasyVisualMcpModel`)
-- **Helpers:** `models/utils.php`, `models/frame.php`, `models/dispatcher.php`, `models/req.php`
-- **Controller stub:** `controller.php`
-- **Examples:** `examples/wordpress-mcp.http` (HTTP request samples)
+## Architecture & Data Flow
 
-## Tooling & Extensibility
-- Tools are defined in `EasyVisualMcpModel::getTools()` as arrays with `name`, `description`, and `inputSchema` (JSON Schema-like).
-- Tool execution is routed via `EasyVisualMcpModel::dispatchTool($tool, $args, $id)`.
-- To add a new tool, extend the `$tools` array and add a case in `dispatchTool`.
-- Each tool can specify required WordPress capabilities (see `getToolCapability`).
+### Request Flow (JSON-RPC 2.0)
+1. Client → `/wp-json/easy-visual-mcp/v1/messages` (POST) or `/sse` (GET for streaming)
+2. `mod.php::canAccessMCP()` → token validation (Bearer header or `?token=` query param)
+3. `mod.php::handleDirectJsonRPC()` → method routing (`initialize`, `tools/list`, `tools/call`)
+4. `models/model.php::dispatchTool()` → tool execution with capability check
+5. Response → JSON-RPC result or error
 
-## Authentication & Security
-- By default, endpoints are public (read-only for most tools).
-- Admins can configure a Bearer token in the plugin settings (see `mod.php` and admin UI).
-- If a token is set, it must be provided via `Authorization: Bearer <token>` header or `?token=` query param.
-- Token can be mapped to a specific WP user for permission scoping.
+### Key Components
+- **`easy-visual-mcp.php`**: Bootstrap (loads helpers/models, initializes `EasyVisualMcp`), table creation (`wp_evmcp_queue`, `wp_evmcp_tools`), seeding, cron scheduling
+- **`mod.php`**: Core logic – REST API registration, auth (`canAccessMCP`), JSON-RPC dispatch, SSE streaming, **two-tab admin UI** (Settings + Tools Management)
+- **`models/model.php`**: Tool registry (`getTools()`), dispatch logic (`dispatchTool()`), capability mapping (`getToolCapability()`), **tools filtering** (`getToolsList()`)
+- **Helpers**: `utils.php` (safe array access), `dispatcher.php` (filter wrapper), `frame.php` (stub for logging)
 
-## Developer Workflows
-- **No build step**: This is a pure PHP plugin, no compilation required.
-- **Testing**: Use HTTP clients (e.g., REST Client, curl, Postman) to POST to `/messages` or connect to `/sse`.
-- **Debugging**: Enable `WP_DEBUG` in WordPress to log detailed events and errors (see `mod.php`).
-- **Admin UI**: Settings and token management are available in the WordPress admin panel.
+### SSE Streaming (Critical for ChatGPT Connectors)
+- SSE endpoint: `/wp-json/easy-visual-mcp/v1/sse` (GET or POST)
+- On connect, sends `event: endpoint` with `/messages` URL for client to POST to
+- Polls session queue every 200ms, sends `event: message` with JSON-RPC responses
+- Sends `event: heartbeat` every 10s, `event: bye` on disconnect/timeout (5min idle)
+- **Important**: Disables output buffering (`ob_end_flush()`, `X-Accel-Buffering: no`) to prevent CDN/proxy blocking
+- Responses are buffered in MySQL table `wp_evmcp_queue`; messages expire after 5 min and the `evmcp_clean_queue` cron job (hourly) purges old rows.
 
-## Project Conventions
-- All REST endpoints are registered in `mod.php` using the `rest_api_init` hook.
-- Tool schemas use a simplified JSON Schema for parameter validation.
-- Permission checks are centralized in `getToolCapability` and enforced before tool execution.
-- Use `EasyVisualMcpUtils::getArrayValue` for safe array access.
-- All new tools should be documented in the `readme.txt` and, if needed, in `TODO.md`.
+## Tool Development Pattern
 
-## Integration Points
-- Designed for LLM/AI integration: tools are discoverable and callable via JSON-RPC 2.0.
-- SSE endpoint is required for streaming/real-time integrations (e.g., ChatGPT Connectors).
-- Example HTTP requests and environment variables are in `examples/` and `.vscode/rest-client.env.json`.
+### Adding a New Tool (3-Step Pattern)
+```php
+// 1. Define in getTools() (models/model.php ~line 70)
+'my_new_tool' => array(
+    'name' => 'my_new_tool',
+    'description' => 'Does X with Y. Returns Z.',
+    'inputSchema' => array(
+        'type' => 'object',
+        'properties' => array(
+            'param1' => array('type' => 'string'),
+        ),
+        'required' => array('param1'),
+    ),
+),
 
-## References
-- See `readme.txt` for endpoint usage, authentication, and integration examples.
-- See `MIGRACION_TOOLS.md` for migration notes and tool porting checklist.
-- See `TODO.md` for current development priorities and open tasks.
+// 2. Add capability if mutating (models/model.php::getToolCapability ~line 693)
+'my_new_tool' => 'edit_posts', // or null for public
 
----
+// 3. Implement in dispatchTool() (models/model.php ~line 730)
+case 'my_new_tool':
+    $param1 = $args['param1'] ?? '';
+    // ... logic using WP functions ...
+    $addResultText($r, "Success message");
+    return $r;
 
-**Example: Adding a new tool**
-1. Add a new entry to the `$tools` array in `models/model.php`.
-2. Implement the tool logic in the `dispatchTool` method.
-3. Document the tool in `readme.txt` and update `TODO.md` if needed.
+// 4. Add to wp_evmcp_tools table on activation (easy-visual-mcp.php::easy_visual_mcp_seed_initial_tools)
+array('my_new_tool', 'Does X with Y. Returns Z.', 'WordPress - YourCategory', 1),
+```
 
----
+**Important**: Only enabled tools (where `enabled = 1` in `wp_evmcp_tools`) are returned by `getToolsList()`. Users can enable/disable tools from the admin UI Tools Management tab.
 
-For questions about project-specific conventions or unclear patterns, review the admin UI, `readme.txt`, and the main PHP files listed above.
+### Intent Classification (models/model.php::getIntentForTool)
+- **`read`**: Public tools (no confirmation) – e.g., `wp_get_posts`, `wp_get_users`
+- **`sensitive_read`**: Requires confirmation – `wp_get_option`, `wp_get_post_meta`, `fetch`
+- **`write`**: Requires confirmation – all `wp_create_*`, `wp_update_*`, `wp_delete_*`, plugin/theme install
+
+## Authentication & Security Patterns
+
+### Token Validation (mod.php::canAccessMCP)
+```php
+// Priority order:
+// 1. If no token configured → allow public access
+// 2. Check Authorization: Bearer <token>
+// 3. Fallback to ?token=<token> query param
+// 4. On match → wp_set_current_user() to mapped user or admin
+// 5. Apply filters 'allow_evmcp' (extensible)
+```
+
+### Capability Enforcement (models/model.php::dispatchTool)
+```php
+$required_cap = $this->getToolCapability($tool);
+if ($required_cap && !current_user_can($required_cap)) {
+    $r['error'] = array('code' => -32603, 'message' => 'Insufficient permissions');
+    return $r;
+}
+```
+
+## Critical Developer Workflows
+
+### Testing with REST Client
+Use `examples/wordpress-mcp.http`:
+```http
+POST https://your-site.test/wp-json/easy-visual-mcp/v1/messages
+Authorization: Bearer YOUR_TOKEN
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {"name": "mcp_ping", "arguments": {}},
+  "id": 1
+}
+```
+
+### Debugging (WP_DEBUG mode)
+- Enable: `define('WP_DEBUG', true);` in `wp-config.php`
+- Logs in `mod.php`: auth flow (`canAccessMCP`), SSE events, token masking
+- Logs in `models/model.php`: tool not found, capability checks
+- Check WordPress debug.log or error_log
+
+### Admin UI (Settings & Tools Management)
+- **Location**: WordPress Admin → Easy Visual MCP (top-level menu with dashicons-rest-api icon)
+- **Two Tabs**:
+  - **Settings**: Generate/revoke tokens (AJAX `evmcp_generate_token`, `evmcp_revoke_token`), map token to WP user, endpoint URLs
+  - **Tools Management**: Enable/disable tools per category, updates `wp_evmcp_tools` table
+- **Registered in**: `mod.php::registerAdmin()`, `mod.php::renderSettingsTab()`, `mod.php::renderToolsTab()`
+
+## Project-Specific Conventions
+
+### Safe Array Access Pattern
+Always use `EasyVisualMcpUtils::getArrayValue($arr, 'key', $default)` instead of direct array access to prevent notices.
+
+### Result Construction (dispatchTool)
+```php
+// Use helper closure to add text results:
+$addResultText($r, "Human-readable output");
+// Or set structured result:
+$r['result'] = array('content' => [array('type' => 'text', 'text' => '...')]);
+```
+
+### Error Handling (JSON-RPC codes)
+- `-32700`: Parse error (invalid JSON)
+- `-32600`: Invalid Request (method missing)
+- `-32601`: Method not found
+- `-32603`: Internal error / Insufficient permissions
+- `-44001`: Custom "Method not found" fallback
+- `-44000`: Internal exception
+
+### HTML Sanitization
+Use `$cleanHtml = function($v) { return wp_kses_post( wp_unslash( $v ) ); };` for user-provided HTML content.
+
+### JSON-RPC ID Handling
+The `id` field in JSON-RPC 2.0 can be **string, int, or null**. All methods handling `$id` (e.g., `handleCallback`, `dispatchTool`, `rpcError`) accept mixed types without type hints to comply with the spec.
+
+## Migration & Extension
+
+### Porting Tools from ai-copilot (see MIGRACION_TOOLS.md)
+- Replace `WaicUtils` → `EasyVisualMcpUtils`
+- Replace `WaicFrame` → `EasyVisualMcpFrame`
+- Update tool array in `getTools()`
+- Copy/adapt dispatch case blocks
+- Test with `body_*.json` example files
+
+### Current Status (TODO.md priorities)
+- ✅ Basic tools (posts, users, comments, taxonomies, media, plugins)
+- 🚧 OpenAI/ChatGPT `functions` adapter (in-progress)
+- ⏳ Token validation for mutating tools (partially done)
+- ⏳ Strict parameter validation against schemas
+
+## External Dependencies & Integration
+
+### WordPress APIs Used
+- `wp_insert_post()`, `wp_update_post()`, `wp_delete_post()`
+- `get_posts()`, `get_comments()`, `get_users()`
+- `wp_insert_term()`, `wp_delete_term()`, `get_terms()`
+- `wp_upload_bits()` for media (from `aiwu_image` tool)
+- `activate_plugin()`, `deactivate_plugins()`, `plugins_api()`
+- Plugin/Theme Upgrader API for installs
+
+### LLM Integration Notes
+- **ChatGPT Connectors**: MUST use SSE endpoint (not just `/messages`)
+- **Tool Discovery**: Call `tools/list` first, then `tools/call` with `name` + `arguments`
+- **Protocol Version**: Advertises `2025-06-18` in `initialize` response
+- **Capabilities**: `tools.listChanged = true`, `prompts/resources = false`
+
+## Quick Reference
+
+### File Locations for Common Tasks
+- Add tool: `models/model.php` → `getTools()` + `dispatchTool()`
+- Add capability: `models/model.php` → `getToolCapability()`
+- Modify auth: `mod.php` → `canAccessMCP()`
+- Admin UI: `mod.php` → `registerAdmin()`, `settingsPage()`
+- Test requests: `examples/wordpress-mcp.http` or `body_*.json` files
+- Queue storage: `mod.php::storeMessage()` / `fetchMessages()` (table `wp_evmcp_queue`)
+- Queue cleanup cron: `easy-visual-mcp.php::easy_visual_mcp_clean_queue()` (hook `evmcp_clean_queue` hourly)
+- Tools database: `easy-visual-mcp.php::easy_visual_mcp_maybe_create_tools_table()`, `easy_visual_mcp_seed_initial_tools()` (table `wp_evmcp_tools`)
+
+### No Build Step
+Pure PHP plugin – edit files, reload WordPress. No npm/composer/webpack required.
+- Test requests: `examples/wordpress-mcp.http` or `body_*.json` files
+- Queue storage: `mod.php::storeMessage()` / `fetchMessages()` (table `wp_evmcp_queue`)
+- Queue cleanup cron: `easy-visual-mcp.php::easy_visual_mcp_clean_queue()` (hook `evmcp_clean_queue` hourly)
+
+### No Build Step
+Pure PHP plugin – edit files, reload WordPress. No npm/composer/webpack required.

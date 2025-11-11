@@ -1,0 +1,25 @@
+# Development files and documentation
+/dev/
+
+# IDE and editor files
+/.vscode/
+/.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+
+# WordPress
+.htaccess
+
+# Node modules (if using build tools)
+/node_modules/
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*~
+
+# Build artifacts
+/dist/
+/build/

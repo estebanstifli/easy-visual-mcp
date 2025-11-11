@@ -11,7 +11,15 @@ class EasyVisualMcp {
 	private $lastAction = 0;
 	private $protocolVersion = '2025-06-18';
 	private $serverVersion = '0.0.1';
-	private $queueKey = 'evmcp_msg';
+	private $queueTable = '';
+	private $queueTtl = 300; // seconds
+
+	public function __construct() {
+		global $wpdb;
+		if (isset($wpdb->prefix)) {
+			$this->queueTable = $wpdb->prefix . 'evmcp_queue';
+		}
+	}
 
 	public function init() {
 		add_action('rest_api_init', array($this, 'restApiInit'));
@@ -19,9 +27,17 @@ class EasyVisualMcp {
 		if (is_admin()) {
 			add_action('admin_menu', array($this, 'registerAdmin'));
 			add_action('admin_init', array($this, 'registerSettings'));
-			// AJAX handlers for token generation/revocation
+			// AJAX handler for token generation
 			add_action('wp_ajax_evmcp_generate_token', array($this, 'ajax_generate_token'));
-			add_action('wp_ajax_evmcp_revoke_token', array($this, 'ajax_revoke_token'));
+			// AJAX handlers for profiles management
+			add_action('wp_ajax_evmcp_create_profile', array($this, 'ajax_create_profile'));
+			add_action('wp_ajax_evmcp_update_profile', array($this, 'ajax_update_profile'));
+			add_action('wp_ajax_evmcp_delete_profile', array($this, 'ajax_delete_profile'));
+			add_action('wp_ajax_evmcp_duplicate_profile', array($this, 'ajax_duplicate_profile'));
+			add_action('wp_ajax_evmcp_apply_profile', array($this, 'ajax_apply_profile'));
+			add_action('wp_ajax_evmcp_export_profile', array($this, 'ajax_export_profile'));
+			add_action('wp_ajax_evmcp_import_profile', array($this, 'ajax_import_profile'));
+			add_action('wp_ajax_evmcp_restore_system_profiles', array($this, 'ajax_restore_system_profiles'));
 		}
 	}
 
@@ -62,7 +78,7 @@ class EasyVisualMcp {
 	}
 
 	public function canAccessMCP( $request ) {
-		// Si no hay token configurado, permitir acceso público
+		// If no token configured, allow public access
 		if (empty($this->mcpToken)) {
 			if (defined('WP_DEBUG') && WP_DEBUG) {
 				error_log('[EVMCP] canAccessMCP: no token configured, allowing public access');
@@ -132,7 +148,7 @@ class EasyVisualMcp {
 		return substr($t,0,4) . str_repeat('*', max(0,$len-8)) . substr($t,-4);
 	}
 
-	public function handleCallback( $result, string $tool, array $args, int $id ) {
+	public function handleCallback( $result, string $tool, array $args, $id ) {
 		if (!empty($result)) {
 			return $result;
 		}
@@ -223,7 +239,7 @@ class EasyVisualMcp {
 		$this->lastAction = time();
 		$msgUri = sprintf('%s/messages?session_id=%s', rest_url($this->namespace), $this->sessionID);
 		if (!empty($this->mcpToken)) {
-			$msgUri .= '&token=' . $this->mcpToken;
+			$msgUri .= '&token=' . rawurlencode((string) $this->mcpToken);
 		}
 		if (defined('WP_DEBUG') && WP_DEBUG) {
 			error_log('[EVMCP] handleSSE: sessionID=' . $this->sessionID . ' msgUri=' . $msgUri);
@@ -553,39 +569,89 @@ class EasyVisualMcp {
 		$this->storeMessage($sess, $this->rpcError($id, $code, $msg, $extra));
 	}
 
-	private function transientKey( $sess, $id ) {
-		return "{$this->queueKey}_{$sess}_{$id}";
-	}
-
 	private function storeMessage( $sess, $payload ) {
-		if (!$sess) {
+		if (empty($sess) || empty($this->queueTable)) {
 			return;
 		}
-		$idKey = array_key_exists('id', $payload) ? ( isset($payload['id']) ? $payload['id'] : 'NULL' ) : 'N/A';
-		set_transient($this->transientKey($sess, $idKey), $payload, 30);
+		global $wpdb;
+		$sessionKey = $this->normalizeSessionId($sess);
+		if ('' === $sessionKey) {
+			return;
+		}
+		$messageId = null;
+		if (is_array($payload) && array_key_exists('id', $payload)) {
+			if (is_null($payload['id'])) {
+				$messageId = null;
+			} elseif (is_scalar($payload['id'])) {
+				$messageId = (string) $payload['id'];
+			} else {
+				$messageId = wp_json_encode($payload['id']);
+			}
+		}
+		if (!is_null($messageId)) {
+			$messageId = substr($messageId, 0, 191);
+		}
+		$nowTs = current_time('timestamp', true);
+		$now = gmdate('Y-m-d H:i:s', $nowTs);
+		$expires = gmdate('Y-m-d H:i:s', $nowTs + $this->queueTtl);
+		$wpdb->insert(
+			$this->queueTable,
+			array(
+				'session_id' => $sessionKey,
+				'message_id' => $messageId,
+				'payload' => maybe_serialize($payload),
+				'created_at' => $now,
+				'expires_at' => $expires,
+			),
+			array('%s', '%s', '%s', '%s', '%s')
+		);
 	}
 
 	private function fetchMessages( $sess ) {
+		if (empty($sess) || empty($this->queueTable)) {
+			return array();
+		}
 		global $wpdb;
-		$like = $wpdb->esc_like( '_transient_' . "{$this->queueKey}_{$sess}_" ) . '%';
+		$sessionKey = $this->normalizeSessionId($sess);
+		if ('' === $sessionKey) {
+			return array();
+		}
+		$now = gmdate('Y-m-d H:i:s');
 		$rows = $wpdb->get_results(
-			$wpdb->prepare("SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s",  $like),
+			$wpdb->prepare(
+				"SELECT id, payload FROM {$this->queueTable} WHERE session_id = %s AND expires_at >= %s ORDER BY id ASC",
+				$sessionKey,
+				$now
+			),
 			ARRAY_A
 		);
-		$msgs = array();
-		foreach ($rows as $r) {
-			$msgs[] = maybe_unserialize($r['option_value']);
-			delete_option( $r['option_name'] );
+		if (empty($rows)) {
+			return array();
 		}
-		usort($msgs, function( $a, $b ) {
-			$aId = isset($a['id']) ? $a['id'] : 0;
-			$bId = isset($b['id']) ? $b['id'] : 0;
-			if ($aId == $bId) {
-				return 0;
+		$ids = array();
+		$msgs = array();
+		foreach ($rows as $row) {
+			$ids[] = (int) $row['id'];
+			$decoded = maybe_unserialize($row['payload']);
+			if ($decoded === false && 'b:0;' !== $row['payload']) {
+				$decoded = $row['payload'];
 			}
-			return ($aId < $bId) ? -1 : 1;
-		});
+			$msgs[] = $decoded;
+		}
+		if (!empty($ids)) {
+			$placeholders = implode(',', array_fill(0, count($ids), '%d'));
+			$query = "DELETE FROM {$this->queueTable} WHERE id IN ($placeholders)";
+			$wpdb->query($wpdb->prepare($query, ...$ids));
+		}
 		return $msgs;
+	}
+
+	private function normalizeSessionId( $sess ) {
+		if (empty($sess)) {
+			return '';
+		}
+		$sess = preg_replace('/[^A-Za-z0-9_\-]/', '', (string) $sess);
+		return substr($sess, 0, 191);
 	}
 	private function getModel() {
 		return new EasyVisualMcpModel();
@@ -612,29 +678,347 @@ class EasyVisualMcp {
 		}
 	}
     
-	/**
-	 * AJAX: revoke current token (clears option). Requires manage_options
-	 */
-	public function ajax_revoke_token() {
+	// ============ PROFILE MANAGEMENT AJAX HANDLERS ============
+	
+	public function ajax_apply_profile() {
 		if (!current_user_can('manage_options')) {
 			wp_send_json_error(array('message' => 'No permission'), 403);
 		}
-		check_ajax_referer('evmcp-admin');
-		// Clear the option so saving will persist empty token
-		update_option('easy_visual_mcp_token', '');
+		check_ajax_referer('evmcp_profiles');
+		
+		global $wpdb;
+		$profile_id = intval($_POST['profile_id'] ?? 0);
+		
+		if ($profile_id <= 0) {
+			wp_send_json_error(array('message' => 'Invalid profile ID'));
+		}
+		
+		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
+		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+		$tools_table = $wpdb->prefix . 'evmcp_tools';
+		
+		// Get profile tools
+		$profile_tools = $wpdb->get_col($wpdb->prepare(
+			"SELECT tool_name FROM {$profile_tools_table} WHERE profile_id = %d",
+			$profile_id
+		));
+		
+		if ($profile_tools === null) {
+			wp_send_json_error(array('message' => 'Profile not found'));
+		}
+		
+		// Disable all tools first
+		$wpdb->query("UPDATE {$tools_table} SET enabled = 0");
+		
+		// Enable profile tools
+		if (!empty($profile_tools)) {
+			$placeholders = implode(',', array_fill(0, count($profile_tools), '%s'));
+			$wpdb->query($wpdb->prepare(
+				"UPDATE {$tools_table} SET enabled = 1 WHERE tool_name IN ($placeholders)",
+				...$profile_tools
+			));
+		}
+		
+		// Mark profile as active
+		$wpdb->query("UPDATE {$profiles_table} SET is_active = 0");
+		$wpdb->update($profiles_table, array('is_active' => 1), array('id' => $profile_id), array('%d'), array('%d'));
+		
+		wp_send_json_success(array('message' => count($profile_tools) . ' herramientas habilitadas'));
+	}
+	
+	public function ajax_delete_profile() {
+		if (!current_user_can('manage_options')) {
+			wp_send_json_error(array('message' => 'No permission'), 403);
+		}
+		check_ajax_referer('evmcp_profiles');
+		
+		global $wpdb;
+		$profile_id = intval($_POST['profile_id'] ?? 0);
+		
+		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
+		
+		// Check if system profile
+		$is_system = $wpdb->get_var($wpdb->prepare(
+			"SELECT is_system FROM {$profiles_table} WHERE id = %d",
+			$profile_id
+		));
+		
+		if ($is_system === null) {
+			wp_send_json_error(array('message' => 'Profile not found'));
+		}
+		
+		if (intval($is_system) === 1) {
+			wp_send_json_error(array('message' => 'Cannot delete system profiles'));
+		}
+		
+		$wpdb->delete($profiles_table, array('id' => $profile_id), array('%d'));
+		
 		wp_send_json_success();
+	}
+	
+	public function ajax_duplicate_profile() {
+		if (!current_user_can('manage_options')) {
+			wp_send_json_error(array('message' => 'No permission'), 403);
+		}
+		check_ajax_referer('evmcp_profiles');
+		
+		global $wpdb;
+		$profile_id = intval($_POST['profile_id'] ?? 0);
+		
+		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
+		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+		
+		// Get original profile
+		$original = $wpdb->get_row($wpdb->prepare(
+			"SELECT * FROM {$profiles_table} WHERE id = %d",
+			$profile_id
+		), ARRAY_A);
+		
+		if (!$original) {
+			wp_send_json_error(array('message' => 'Profile not found'));
+		}
+		
+		// Create new profile name
+		$new_name = 'Copia de ' . $original['profile_name'];
+		$counter = 1;
+		while ($wpdb->get_var($wpdb->prepare("SELECT id FROM {$profiles_table} WHERE profile_name = %s", $new_name))) {
+			$counter++;
+			$new_name = 'Copia de ' . $original['profile_name'] . ' (' . $counter . ')';
+		}
+		
+		$now = current_time('mysql', true);
+		
+		// Insert new profile
+		$wpdb->insert(
+			$profiles_table,
+			array(
+				'profile_name' => $new_name,
+				'profile_description' => $original['profile_description'],
+				'is_system' => 0, // Duplicates are always custom
+				'is_active' => 0,
+				'created_at' => $now,
+				'updated_at' => $now,
+			),
+			array('%s', '%s', '%d', '%d', '%s', '%s')
+		);
+		
+		$new_profile_id = $wpdb->insert_id;
+		
+		// Copy tools
+		$tools = $wpdb->get_col($wpdb->prepare(
+			"SELECT tool_name FROM {$profile_tools_table} WHERE profile_id = %d",
+			$profile_id
+		));
+		
+		foreach ($tools as $tool_name) {
+			$wpdb->insert(
+				$profile_tools_table,
+				array(
+					'profile_id' => $new_profile_id,
+					'tool_name' => $tool_name,
+					'created_at' => $now,
+				),
+				array('%d', '%s', '%s')
+			);
+		}
+		
+		wp_send_json_success();
+	}
+	
+	public function ajax_export_profile() {
+		if (!current_user_can('manage_options')) {
+			wp_die('No permission', 403);
+		}
+		check_ajax_referer('evmcp_profiles');
+		
+		global $wpdb;
+		$profile_id = intval($_GET['profile_id'] ?? 0);
+		
+		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
+		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+		$tools_table = $wpdb->prefix . 'evmcp_tools';
+		
+		$profile = $wpdb->get_row($wpdb->prepare(
+			"SELECT * FROM {$profiles_table} WHERE id = %d",
+			$profile_id
+		), ARRAY_A);
+		
+		if (!$profile) {
+			wp_die('Profile not found', 404);
+		}
+		
+		$tools = $wpdb->get_col($wpdb->prepare(
+			"SELECT tool_name FROM {$profile_tools_table} WHERE profile_id = %d ORDER BY tool_name",
+			$profile_id
+		));
+		
+		// Get categories
+		$categories = $wpdb->get_col($wpdb->prepare(
+			"SELECT DISTINCT category FROM {$tools_table} 
+			WHERE tool_name IN (" . implode(',', array_fill(0, count($tools), '%s')) . ")
+			ORDER BY category",
+			...$tools
+		));
+		
+		$export = array(
+			'format_version' => '1.0',
+			'export_date' => gmdate('Y-m-d\TH:i:s\Z'),
+			'plugin_version' => '0.1.0',
+			'profile' => array(
+				'name' => $profile['profile_name'],
+				'description' => $profile['profile_description'],
+				'tools' => $tools,
+				'tools_count' => count($tools),
+				'categories_included' => $categories,
+			),
+		);
+		
+		$filename = sanitize_file_name($profile['profile_name']) . '-profile.json';
+		
+		header('Content-Type: application/json');
+		header('Content-Disposition: attachment; filename="' . $filename . '"');
+		echo json_encode($export, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+		exit;
+	}
+	
+	public function ajax_import_profile() {
+		if (!current_user_can('manage_options')) {
+			wp_send_json_error(array('message' => 'No permission'), 403);
+		}
+		check_ajax_referer('evmcp_profiles');
+		
+		global $wpdb;
+		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
+		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+		$tools_table = $wpdb->prefix . 'evmcp_tools';
+		
+		$json_data = $_POST['profile_json'] ?? '';
+		if (empty($json_data)) {
+			wp_send_json_error(array('message' => 'No JSON data provided'));
+		}
+		
+		$data = json_decode($json_data, true);
+		if (!$data || !isset($data['profile'])) {
+			wp_send_json_error(array('message' => 'Invalid JSON format'));
+		}
+		
+		$profile = $data['profile'];
+		$name = sanitize_text_field($profile['name'] ?? 'Importado');
+		$description = sanitize_textarea_field($profile['description'] ?? '');
+		$tools = $profile['tools'] ?? array();
+		
+		// Check if name exists
+		$counter = 1;
+		$original_name = $name;
+		while ($wpdb->get_var($wpdb->prepare("SELECT id FROM {$profiles_table} WHERE profile_name = %s", $name))) {
+			$counter++;
+			$name = $original_name . ' (' . $counter . ')';
+		}
+		
+		// Validate tools exist
+		$existing_tools = $wpdb->get_col("SELECT tool_name FROM {$tools_table}");
+		$valid_tools = array_intersect($tools, $existing_tools);
+		
+		if (empty($valid_tools)) {
+			wp_send_json_error(array('message' => 'No valid tools found in profile'));
+		}
+		
+		$now = current_time('mysql', true);
+		
+		// Insert profile
+		$wpdb->insert(
+			$profiles_table,
+			array(
+				'profile_name' => $name,
+				'profile_description' => $description,
+				'is_system' => 0,
+				'is_active' => 0,
+				'created_at' => $now,
+				'updated_at' => $now,
+			),
+			array('%s', '%s', '%d', '%d', '%s', '%s')
+		);
+		
+		$profile_id = $wpdb->insert_id;
+		
+		// Insert tools
+		foreach ($valid_tools as $tool_name) {
+			$wpdb->insert(
+				$profile_tools_table,
+				array(
+					'profile_id' => $profile_id,
+					'tool_name' => $tool_name,
+					'created_at' => $now,
+				),
+				array('%d', '%s', '%s')
+			);
+		}
+		
+		$ignored_count = count($tools) - count($valid_tools);
+		$message = 'Perfil importado: ' . count($valid_tools) . ' herramientas';
+		if ($ignored_count > 0) {
+			$message .= ' (' . $ignored_count . ' herramientas no encontradas fueron ignoradas)';
+		}
+		
+		wp_send_json_success(array('message' => $message));
+	}
+	
+	public function ajax_restore_system_profiles() {
+		if (!current_user_can('manage_options')) {
+			wp_send_json_error(array('message' => 'No permission'), 403);
+		}
+		check_ajax_referer('evmcp_profiles');
+		
+		global $wpdb;
+		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
+		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+		
+		// Delete existing system profiles
+		$system_ids = $wpdb->get_col("SELECT id FROM {$profiles_table} WHERE is_system = 1");
+		if (!empty($system_ids)) {
+			$placeholders = implode(',', array_fill(0, count($system_ids), '%d'));
+			$wpdb->query($wpdb->prepare("DELETE FROM {$profile_tools_table} WHERE profile_id IN ($placeholders)", ...$system_ids));
+			$wpdb->query("DELETE FROM {$profiles_table} WHERE is_system = 1");
+		}
+		
+		// Re-seed system profiles
+		easy_visual_mcp_seed_system_profiles();
+		
+		wp_send_json_success();
+	}
+	
+	public function ajax_create_profile() {
+		if (!current_user_can('manage_options')) {
+			wp_send_json_error(array('message' => 'No permission'), 403);
+		}
+		check_ajax_referer('evmcp_profiles');
+		
+		// TODO: Implement create/edit modal in next phase
+		wp_send_json_error(array('message' => 'Not implemented yet'));
+	}
+	
+	public function ajax_update_profile() {
+		if (!current_user_can('manage_options')) {
+			wp_send_json_error(array('message' => 'No permission'), 403);
+		}
+		check_ajax_referer('evmcp_profiles');
+		
+		// TODO: Implement create/edit modal in next phase
+		wp_send_json_error(array('message' => 'Not implemented yet'));
 	}
 
 	/**
 	 * Register admin menu entry for plugin settings
 	 */
 	public function registerAdmin() {
-		add_options_page(
-			__('Easy Visual MCP','easy-visual-mcp'),
-			__('Easy Visual MCP','easy-visual-mcp'),
+		add_menu_page(
+			__('Easy Visual MCP', 'easy-visual-mcp'),
+			__('Easy Visual MCP', 'easy-visual-mcp'),
 			'manage_options',
 			'easy-visual-mcp',
-			array($this, 'adminPage')
+			array($this, 'adminPage'),
+			'dashicons-rest-api',
+			30
 		);
 	}
 
@@ -651,106 +1035,151 @@ class EasyVisualMcp {
 	 */
 	public function adminPage() {
 		if (!current_user_can('manage_options')) {
-			wp_die(__('No tienes permiso para ver esta página.','easy-visual-mcp'));
+			wp_die(__('You do not have permission to view this page.','easy-visual-mcp'));
 		}
-		// Save notices handled by settings API
+		
+		// Get active tab
+		$active_tab = isset($_GET['tab']) ? sanitize_text_field($_GET['tab']) : 'settings';
+		
+		?>
+		<div class="wrap">
+			<h1><?php echo esc_html__('Easy Visual MCP', 'easy-visual-mcp'); ?></h1>
+			
+			<h2 class="nav-tab-wrapper">
+				<a href="?page=easy-visual-mcp&tab=settings" class="nav-tab <?php echo $active_tab === 'settings' ? 'nav-tab-active' : ''; ?>">
+					<?php echo esc_html__('Settings', 'easy-visual-mcp'); ?>
+				</a>
+				<a href="?page=easy-visual-mcp&tab=profiles" class="nav-tab <?php echo $active_tab === 'profiles' ? 'nav-tab-active' : ''; ?>">
+					<?php echo esc_html__('Profiles', 'easy-visual-mcp'); ?>
+				</a>
+				<a href="?page=easy-visual-mcp&tab=tools" class="nav-tab <?php echo $active_tab === 'tools' ? 'nav-tab-active' : ''; ?>">
+					<?php echo esc_html__('WordPress Tools', 'easy-visual-mcp'); ?>
+				</a>
+				<a href="?page=easy-visual-mcp&tab=wc_tools" class="nav-tab <?php echo $active_tab === 'wc_tools' ? 'nav-tab-active' : ''; ?>">
+					<?php echo esc_html__('WooCommerce Tools', 'easy-visual-mcp'); ?>
+				</a>
+			</h2>
+			
+			<?php
+			if ($active_tab === 'settings') {
+				$this->renderSettingsTab();
+			} elseif ($active_tab === 'profiles') {
+				$this->renderProfilesTab();
+			} elseif ($active_tab === 'tools') {
+				$this->renderToolsTab();
+			} elseif ($active_tab === 'wc_tools') {
+				$this->renderWCToolsTab();
+			}
+			?>
+		</div>
+		<?php
+	}
+	
+	private function renderSettingsTab() {
 		$token = get_option('easy_visual_mcp_token', '');
 		$token_user = intval(get_option('easy_visual_mcp_token_user', 0));
-	$endpoint = rest_url($this->namespace . '/messages');
-	$sse_endpoint = rest_url($this->namespace . '/sse');
+		$endpoint = rest_url($this->namespace . '/messages');
 		$users = get_users(array('orderby' => 'display_name', 'fields' => array('ID','display_name','user_login')));
-	?>
-		<div class="wrap">
-			<h1><?php echo esc_html__('Easy Visual MCP - Ajustes', 'easy-visual-mcp'); ?></h1>
-			<form method="post" action="options.php">
-				<?php settings_fields('easy_visual_mcp'); ?>
-				<?php do_settings_sections('easy_visual_mcp'); ?>
-				<table class="form-table">
-					<tr valign="top">
-						<th scope="row"><?php echo esc_html__('Token (Bearer)', 'easy-visual-mcp'); ?></th>
-						<td>
-							<input id="evmcp_token_field" type="text" name="easy_visual_mcp_token" value="<?php echo esc_attr($token); ?>" class="regular-text" />
-							<p class="description"><?php echo esc_html__('Token que permitirá llamadas autenticadas al endpoint. Dejar vacío para permitir acceso público (no recomendado).', 'easy-visual-mcp'); ?></p>
-							<p>
-								<button id="evmcp_generate" class="button button-secondary" type="button"><?php echo esc_html__('Generar token', 'easy-visual-mcp'); ?></button>
-								<button id="evmcp_revoke" class="button button-secondary" type="button"><?php echo esc_html__('Revocar token', 'easy-visual-mcp'); ?></button>
-								<span id="evmcp_spinner" style="display:none;margin-left:10px;"><?php echo esc_html__('Procesando...', 'easy-visual-mcp'); ?></span>
-							</p>
-						</td>
-					</tr>
-					<tr valign="top">
-						<th scope="row"><?php echo esc_html__('Asignar token a usuario', 'easy-visual-mcp'); ?></th>
-						<td>
-							<select name="easy_visual_mcp_token_user">
-								<option value="0"><?php echo esc_html__('-- Ninguno (fallback a admin) --', 'easy-visual-mcp'); ?></option>
-								<?php foreach ($users as $u): $sel = ($token_user === intval($u->ID)) ? 'selected' : ''; ?>
-									<option value="<?php echo intval($u->ID); ?>" <?php echo $sel; ?>><?php echo esc_html($u->display_name . ' (' . $u->user_login . ')'); ?></option>
-								<?php endforeach; ?>
-							</select>
-							<p class="description"><?php echo esc_html__('Si seleccionas un usuario, las llamadas autenticadas con el token se ejecutarán con los permisos de ese usuario.', 'easy-visual-mcp'); ?></p>
-						</td>
-					</tr>
-					<tr valign="top">
-						<th scope="row"><?php echo esc_html__('Endpoint', 'easy-visual-mcp'); ?></th>
-						<td>
-							<p><strong><?php echo esc_html__('HTTP JSON-RPC endpoint (requests/responses):', 'easy-visual-mcp'); ?></strong></p>
-							<code id="evmcp_endpoint"><?php echo esc_html($endpoint); ?></code>
-							<p class="description"><?php echo esc_html__('Este endpoint acepta llamadas JSON-RPC 2.0 (métodos: tools/list, tools/call) y es útil para llamadas puntuales o descubrimiento.', 'easy-visual-mcp'); ?></p>
-							<p><strong><?php echo esc_html__('SSE streamable endpoint (recomendado para conectores y streaming):', 'easy-visual-mcp'); ?></strong></p>
-							<code id="evmcp_sse_endpoint"><?php echo esc_html($sse_endpoint); ?></code>
-							<p class="description"><?php echo esc_html__('Para integraciones tipo ChatGPT Connector se recomienda usar la URL SSE (Server-Sent Events) ya que el conector mantiene una conexión streamable al servidor MCP. Muchas implementaciones de cliente intentan abrir un SSE al registrar el conector.', 'easy-visual-mcp'); ?></p>
-							<p class="description"><strong><?php echo esc_html__('Importante:'); ?></strong> <?php echo esc_html__('Si al crear el conector en ChatGPT configuras la URL sin /sse, el conector podrá listar herramientas pero fallará en la fase de streaming/ejecución. Usa la URL SSE en la pantalla del conector.', 'easy-visual-mcp'); ?></p>
-							<p class="description"><?php echo esc_html__('Si tu proveedor de hosting aplica WAF o buffering (nginx/fastcgi buffers), la conexión SSE puede ser bloqueada o bufferizada. Revisa la sección de pruebas más abajo.', 'easy-visual-mcp'); ?></p>
-						</td>
-					</tr>
-				</table>
-				<h2><?php echo esc_html__('Guía rápida', 'easy-visual-mcp'); ?></h2>
-				<p><?php echo esc_html__('Ejemplo para registrar las funciones en OpenAI/ChatGPT (usa el resultado de getOpenAIFunctions() o tools/list):', 'easy-visual-mcp'); ?></p>
-				<pre style="background:#f7f7f7;border:1px solid #ddd;padding:10px;overflow:auto;">{
-  "url": "<?php echo esc_html($endpoint); ?>",
-  "auth": "Bearer &lt;TOKEN&gt;",
-  "format": "JSON-RPC 2.0",
-  "discovery": "tools/list"
+		?>
+		<form method="post" action="options.php">
+			<?php settings_fields('easy_visual_mcp'); ?>
+			<?php do_settings_sections('easy_visual_mcp'); ?>
+			<table class="form-table">
+				<tr valign="top">
+					<th scope="row"><?php echo esc_html__('Token (Bearer)', 'easy-visual-mcp'); ?></th>
+					<td>
+						<input id="evmcp_token_field" type="text" name="easy_visual_mcp_token" value="<?php echo esc_attr($token); ?>" class="regular-text" />
+						<p class="description"><?php echo esc_html__('Token that will allow authenticated calls to the endpoint. Leave empty to allow public access (not recommended).', 'easy-visual-mcp'); ?></p>
+						<p>
+							<button id="evmcp_generate" class="button button-secondary" type="button"><?php echo esc_html__('Generate Token', 'easy-visual-mcp'); ?></button>
+							<span id="evmcp_spinner" style="display:none;margin-left:10px;"><?php echo esc_html__('Processing...', 'easy-visual-mcp'); ?></span>
+						</p>
+					</td>
+				</tr>
+				<tr valign="top">
+					<th scope="row"><?php echo esc_html__('Assign Token to User', 'easy-visual-mcp'); ?></th>
+					<td>
+						<select name="easy_visual_mcp_token_user">
+							<option value="0"><?php echo esc_html__('-- None (fallback to admin) --', 'easy-visual-mcp'); ?></option>
+							<?php foreach ($users as $u): ?>
+								<option value="<?php echo esc_attr(intval($u->ID)); ?>" <?php selected($token_user, intval($u->ID)); ?>><?php echo esc_html($u->display_name . ' (' . $u->user_login . ')'); ?></option>
+							<?php endforeach; ?>
+						</select>
+						<p class="description"><?php echo esc_html__('If you select a user, authenticated calls with the token will be executed with that user\'s permissions.', 'easy-visual-mcp'); ?></p>
+					</td>
+				</tr>
+				<tr valign="top">
+					<th scope="row"><?php echo esc_html__('MCP Endpoint', 'easy-visual-mcp'); ?></th>
+					<td>
+						<p><strong><?php echo esc_html__('JSON-RPC 2.0 Endpoint:', 'easy-visual-mcp'); ?></strong></p>
+						<code id="evmcp_endpoint" style="display:block;background:#f0f0f0;padding:8px;margin:5px 0;font-size:13px;"><?php echo esc_html($endpoint); ?></code>
+						<p class="description"><?php echo esc_html__('This endpoint accepts JSON-RPC 2.0 calls (methods: tools/list, tools/call). Use this URL in your MCP client or connector.', 'easy-visual-mcp'); ?></p>
+					</td>
+				</tr>
+			</table>
+			
+			<h2><?php echo esc_html__('🚀 Quick Start Guide', 'easy-visual-mcp'); ?></h2>
+			
+			<h3><?php echo esc_html__('1. Copy Your Endpoint', 'easy-visual-mcp'); ?></h3>
+			<p><?php echo esc_html__('Use one of these ready-to-use URLs:', 'easy-visual-mcp'); ?></p>
+			
+			<table class="form-table" style="background:#f9f9f9;border:1px solid #ddd;padding:15px;margin:10px 0;">
+				<tr>
+					<th style="width:200px;padding:10px;"><?php echo esc_html__('Endpoint without token:', 'easy-visual-mcp'); ?></th>
+					<td style="padding:10px;">
+						<input type="text" value="<?php echo esc_attr($endpoint); ?>" class="large-text code" readonly style="background:#fff;" onclick="this.select();" />
+						<p class="description"><?php echo esc_html__('Use this if you haven\'t generated a token (public access).', 'easy-visual-mcp'); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th style="padding:10px;"><?php echo esc_html__('Endpoint with token:', 'easy-visual-mcp'); ?></th>
+					<td style="padding:10px;">
+						<input type="text" id="evmcp_url_with_token" class="large-text code" readonly style="background:#fff;" onclick="this.select();" />
+						<button id="evmcp_copy_url" class="button" style="margin-left:5px;"><?php echo esc_html__('📋 Copy', 'easy-visual-mcp'); ?></button>
+						<p class="description"><?php echo esc_html__('Token included in URL (recommended for most clients).', 'easy-visual-mcp'); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th style="padding:10px;"><?php echo esc_html__('Authorization Header:', 'easy-visual-mcp'); ?></th>
+					<td style="padding:10px;">
+						<input type="text" id="evmcp_auth_header" class="large-text code" readonly style="background:#fff;" onclick="this.select();" />
+						<button id="evmcp_copy_header" class="button" style="margin-left:5px;"><?php echo esc_html__('📋 Copy', 'easy-visual-mcp'); ?></button>
+						<p class="description"><?php echo esc_html__('Use this header for Bearer authentication (alternative to URL token).', 'easy-visual-mcp'); ?></p>
+					</td>
+				</tr>
+			</table>
+			
+			<h3><?php echo esc_html__('2. Test Your Endpoint', 'easy-visual-mcp'); ?></h3>
+			<p><?php echo esc_html__('Verify it works with these commands:', 'easy-visual-mcp'); ?></p>
+			
+			<p><strong><?php echo esc_html__('Option A: With Authorization header', 'easy-visual-mcp'); ?></strong></p>
+			<pre style="background:#2c3e50;color:#ecf0f1;border:none;padding:15px;overflow:auto;border-radius:4px;">curl -X POST '<?php echo esc_url($endpoint); ?>' \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer &lt;YOUR_TOKEN&gt;' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</pre>
+			
+			<p><strong><?php echo esc_html__('Option B: With token in URL', 'easy-visual-mcp'); ?></strong></p>
+			<pre style="background:#2c3e50;color:#ecf0f1;border:none;padding:15px;overflow:auto;border-radius:4px;">curl -X POST '<?php echo esc_url($endpoint); ?>?token=&lt;YOUR_TOKEN&gt;' \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</pre>
+			
+			<h3><?php echo esc_html__('3. Configure in Your Client', 'easy-visual-mcp'); ?></h3>
+			<p><?php echo esc_html__('Example configuration for MCP clients:', 'easy-visual-mcp'); ?></p>
+			<pre style="background:#f7f7f7;border:1px solid #ddd;padding:15px;overflow:auto;border-radius:4px;">{
+  "url": "<?php echo esc_url($endpoint); ?>",
+  "auth": "Bearer &lt;YOUR_TOKEN&gt;",
+  "protocol": "JSON-RPC 2.0",
+  "methods": ["tools/list", "tools/call"]
 }</pre>
-				<h3><?php echo esc_html__('Pruebas y diagnóstico', 'easy-visual-mcp'); ?></h3>
-				<p><?php echo esc_html__('Si el conector lista herramientas pero falla al ejecutar o al mantener la conexión, prueba los siguientes comandos desde tu máquina para diagnosticar problemas de SSE/CORS/WAF.', 'easy-visual-mcp'); ?></p>
-				<p><strong><?php echo esc_html__('Probar discovery (tools/list) con header Authorization:', 'easy-visual-mcp'); ?></strong></p>
-				<pre style="background:#f7f7f7;border:1px solid #ddd;padding:8px;">curl -X POST '<?php echo esc_html($endpoint); ?>' \
-	  -H 'Content-Type: application/json' \
-	  -H 'Authorization: Bearer &lt;TOKEN&gt;' \
-	  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</pre>
-				<p><strong><?php echo esc_html__('Probar discovery con token en query string:', 'easy-visual-mcp'); ?></strong></p>
-				<pre style="background:#f7f7f7;border:1px solid #ddd;padding:8px;">curl -X POST '<?php echo esc_html($endpoint); ?>?token=&lt;TOKEN&gt;' \
-	  -H 'Content-Type: application/json' \
-	  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</pre>
-				<p><strong><?php echo esc_html__('Probar conexión SSE (muestra eventos):', 'easy-visual-mcp'); ?></strong></p>
-				<pre style="background:#f7f7f7;border:1px solid #ddd;padding:8px;"># Usando curl (mantiene la conexión abierta, -N para no bufferizar)
-	curl -N '<?php echo esc_html($sse_endpoint); ?>?token=&lt;TOKEN&gt;'
-
-	# PowerShell (Invoke-RestMethod no mantiene SSE; usar curl.exe si está instalado):
-	curl.exe -N "<?php echo esc_html($sse_endpoint); ?>?token=&lt;TOKEN&gt;"</pre>
-				<p><?php echo esc_html__('Si el comando SSE no muestra eventos o devuelve un error HTTP (400/403/502), es muy probable que el proveedor de hosting o un WAF esté bloqueando conexiones de larga duración o eliminando cabeceras necesarias (p. ej. X-Accel-Buffering). En ese caso revisa la configuración de nginx/apache o pide al host que desactive buffering para esta ruta.', 'easy-visual-mcp'); ?></p>
-				<?php submit_button(); ?>
-			</form>
-
-			<h2><?php echo esc_html__('Copiar ejemplo listo', 'easy-visual-mcp'); ?></h2>
-			<p><?php echo esc_html__('Puedes copiar la URL con token (si lo has generado) o la cabecera Authorization para pegarla en el conector de ChatGPT.', 'easy-visual-mcp'); ?></p>
-			<p>
-				<label><?php echo esc_html__('URL con token:', 'easy-visual-mcp'); ?></label>
-				<input type="text" id="evmcp_url_with_token" class="regular-text" readonly />
-				<button id="evmcp_copy_url" class="button"><?php echo esc_html__('Copiar', 'easy-visual-mcp'); ?></button>
-			</p>
-			<p>
-				<label><?php echo esc_html__('Header Authorization:', 'easy-visual-mcp'); ?></label>
-				<input type="text" id="evmcp_auth_header" class="regular-text" readonly />
-				<button id="evmcp_copy_header" class="button"><?php echo esc_html__('Copiar', 'easy-visual-mcp'); ?></button>
-			</p>
-		</div>
+			
+			<?php submit_button(); ?>
+		</form>
+		</p>
 
 		<script type="text/javascript">
 		(function(){
-			var ajaxUrl = '<?php echo admin_url('admin-ajax.php'); ?>';
-			var nonce = '<?php echo wp_create_nonce('evmcp-admin'); ?>';
+			var ajaxUrl = '<?php echo esc_js( admin_url('admin-ajax.php') ); ?>';
+			var nonce = '<?php echo esc_js( wp_create_nonce('evmcp-admin') ); ?>';
 			function setFields(token) {
 				var endpoint = document.getElementById('evmcp_endpoint').textContent || '';
 				document.getElementById('evmcp_token_field').value = token || '';
@@ -771,40 +1200,635 @@ class EasyVisualMcp {
 					document.getElementById('evmcp_spinner').style.display = 'none';
 					if (j.success && j.data && j.data.token) {
 						setFields(j.data.token);
-						alert('<?php echo esc_js(__('Token generado. Guarda los cambios para persistirlo en la opción.', 'easy-visual-mcp')); ?>');
+						alert('<?php echo esc_js(__('Token generated. Save changes to persist it in the option.', 'easy-visual-mcp')); ?>');
 					} else {
-						alert('<?php echo esc_js(__('Error generando token', 'easy-visual-mcp')); ?>: ' + (j.data && j.data.message ? j.data.message : ''));
-					}
-				}).catch(function(e){ document.getElementById('evmcp_spinner').style.display = 'none'; alert('Error: '+e); });
-			});
-
-			document.getElementById('evmcp_revoke').addEventListener('click', function(){
-				if (!confirm('<?php echo esc_js(__('¿Revocar el token actual? Esto dejará inválidas las integraciones que lo usen.', 'easy-visual-mcp')); ?>')) return;
-				document.getElementById('evmcp_spinner').style.display = '';
-				fetch(ajaxUrl, {
-					method: 'POST',
-					credentials: 'same-origin',
-					headers: {'Content-Type':'application/x-www-form-urlencoded'},
-					body: 'action=evmcp_revoke_token&_wpnonce=' + encodeURIComponent(nonce)
-				}).then(function(r){return r.json();}).then(function(j){
-					document.getElementById('evmcp_spinner').style.display = 'none';
-					if (j.success) {
-						setFields('');
-						alert('<?php echo esc_js(__('Token revocado. Guarda los cambios.', 'easy-visual-mcp')); ?>');
-					} else {
-						alert('<?php echo esc_js(__('Error revocando token', 'easy-visual-mcp')); ?>: ' + (j.data && j.data.message ? j.data.message : ''));
+						alert('<?php echo esc_js(__('Error generating token', 'easy-visual-mcp')); ?>: ' + (j.data && j.data.message ? j.data.message : ''));
 					}
 				}).catch(function(e){ document.getElementById('evmcp_spinner').style.display = 'none'; alert('Error: '+e); });
 			});
 
 			document.getElementById('evmcp_copy_url').addEventListener('click', function(){
-				navigator.clipboard.writeText(document.getElementById('evmcp_url_with_token').value).then(function(){ alert('URL copiada'); });
+				navigator.clipboard.writeText(document.getElementById('evmcp_url_with_token').value).then(function(){ alert('URL copied'); });
 			});
 			document.getElementById('evmcp_copy_header').addEventListener('click', function(){
-				navigator.clipboard.writeText(document.getElementById('evmcp_auth_header').value).then(function(){ alert('Header copiado'); });
+				navigator.clipboard.writeText(document.getElementById('evmcp_auth_header').value).then(function(){ alert('Header copied'); });
+			});
+		})();
+		</script>
+		<?php
+	}
+	
+	private function renderToolsTab() {
+		global $wpdb;
+		$table = $wpdb->prefix . 'evmcp_tools';
+		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
+		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+		
+		// Check if there's an active profile
+		$active_profile = $wpdb->get_row("SELECT * FROM {$profiles_table} WHERE is_active = 1", ARRAY_A);
+		
+		// Handle re-seeding
+		if (isset($_POST['evmcp_reseed_nonce']) && wp_verify_nonce($_POST['evmcp_reseed_nonce'], 'evmcp_reseed_tools')) {
+			$wpdb->query("TRUNCATE TABLE {$table}");
+			easy_visual_mcp_seed_initial_tools();
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools reset and reseeded successfully.', 'easy-visual-mcp') . '</p></div>';
+		}
+		
+		// Handle tool enable/disable
+		if (isset($_POST['evmcp_tools_nonce']) && wp_verify_nonce($_POST['evmcp_tools_nonce'], 'evmcp_update_tools')) {
+			if (isset($_POST['tool_enabled']) && is_array($_POST['tool_enabled'])) {
+				foreach ($_POST['tool_enabled'] as $tool_id => $enabled) {
+					$wpdb->update(
+						$table,
+						array('enabled' => intval($enabled), 'updated_at' => current_time('mysql', true)),
+						array('id' => intval($tool_id)),
+						array('%d', '%s'),
+						array('%d')
+					);
+				}
+				// Save current tools state to active profile
+				if ($active_profile) {
+					// Delete existing profile tools
+					$wpdb->delete($profile_tools_table, array('profile_id' => $active_profile['id']), array('%d'));
+					
+					// Get all currently enabled tools (WordPress + WooCommerce)
+					$enabled_tools = $wpdb->get_col("SELECT tool_name FROM {$table} WHERE enabled = 1");
+					
+					// Insert enabled tools into profile
+					if (!empty($enabled_tools)) {
+						foreach ($enabled_tools as $tool_name) {
+							$wpdb->insert(
+								$profile_tools_table,
+								array('profile_id' => $active_profile['id'], 'tool_name' => $tool_name),
+								array('%d', '%s')
+							);
+						}
+					}
+					echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools updated and saved to active profile.', 'easy-visual-mcp') . '</p></div>';
+				} else {
+					echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools updated successfully.', 'easy-visual-mcp') . '</p></div>';
+				}
+			}
+		}
+		
+		// Get all tools grouped by category (ONLY WordPress, excluding WooCommerce)
+		$tools = $wpdb->get_results("SELECT * FROM {$table} WHERE category NOT LIKE 'WooCommerce%' ORDER BY category, tool_name", ARRAY_A);
+		$enabled_token_total = (int) $wpdb->get_var("SELECT COALESCE(SUM(token_estimate),0) FROM {$table} WHERE category NOT LIKE 'WooCommerce%' AND enabled = 1");
+		
+		$grouped_tools = array();
+		foreach ($tools as $tool) {
+			$category = $tool['category'];
+			if (!isset($grouped_tools[$category])) {
+				$grouped_tools[$category] = array();
+			}
+			$grouped_tools[$category][] = $tool;
+		}
+		
+		?>
+		<p><?php echo esc_html__('Here you can manage which tools are available on the MCP server. Disabled tools will not appear in tools/list.', 'easy-visual-mcp'); ?></p>
+		<p><strong><?php echo esc_html__('Total estimated tokens for enabled WordPress tools:', 'easy-visual-mcp'); ?></strong> <?php echo esc_html(number_format_i18n($enabled_token_total)); ?></p>
+		<p class="description"><?php echo esc_html__('Token estimates are approximate (computed from tool name, description, and schema). Use them to compare profiles rather than as an exact billing value.', 'easy-visual-mcp'); ?></p>
+		
+		<?php if ($active_profile): ?>
+			<div class="notice notice-info">
+				<p>
+					<strong>⚠️ <?php echo esc_html__('Active profile:', 'easy-visual-mcp'); ?></strong>
+					<?php echo esc_html($active_profile['profile_name']); ?>
+					<br>
+					<?php echo esc_html__('Changes to tools will be automatically saved to this profile.', 'easy-visual-mcp'); ?>
+					<a href="?page=easy-visual-mcp&tab=profiles" class="button button-small" style="margin-left: 10px;">
+						<?php echo esc_html__('View Profiles', 'easy-visual-mcp'); ?>
+					</a>
+				</p>
+			</div>
+		<?php endif; ?>
+		
+		<?php if (empty($grouped_tools)): ?>
+			<div class="notice notice-warning">
+				<p><?php echo esc_html__('No tools found in the database. Use the button below to seed them.', 'easy-visual-mcp'); ?></p>
+			</div>
+			<form method="post" action="">
+				<?php wp_nonce_field('evmcp_reseed_tools', 'evmcp_reseed_nonce'); ?>
+				<p>
+					<button type="submit" class="button button-primary"><?php echo esc_html__('Seed Initial Tools', 'easy-visual-mcp'); ?></button>
+				</p>
+			</form>
+		<?php else: ?>
+			<form method="post" action="" style="margin-bottom: 20px;">
+				<?php wp_nonce_field('evmcp_reseed_tools', 'evmcp_reseed_nonce'); ?>
+				<p>
+					<button type="submit" class="button button-secondary" onclick="return confirm('<?php echo esc_js(__('This will delete all tools and reseed them. Are you sure?', 'easy-visual-mcp')); ?>');"><?php echo esc_html__('Reset and Reseed Tools', 'easy-visual-mcp'); ?></button>
+					<span class="description"><?php echo esc_html__('Useful if you\'ve updated the plugin and new tools are available.', 'easy-visual-mcp'); ?></span>
+				</p>
+			</form>
+		
+		<form method="post" action="">
+			<?php wp_nonce_field('evmcp_update_tools', 'evmcp_tools_nonce'); ?>
+			
+			<?php foreach ($grouped_tools as $category => $category_tools): ?>
+				<?php $category_token_total = 0; foreach ($category_tools as $tool_meta) { $category_token_total += intval($tool_meta['token_estimate']); } ?>
+				<h2><?php echo esc_html($category); ?> <small style="font-weight: normal;">(<?php echo esc_html__('estimated tokens:', 'easy-visual-mcp'); ?> <?php echo esc_html(number_format_i18n($category_token_total)); ?>)</small></h2>
+				<table class="wp-list-table widefat fixed striped">
+					<thead>
+						<tr>
+							<th style="width:25%"><?php echo esc_html__('Tool', 'easy-visual-mcp'); ?></th>
+							<th style="width:45%"><?php echo esc_html__('Description', 'easy-visual-mcp'); ?></th>
+							<th style="width:15%"><?php echo esc_html__('Tokens (~)', 'easy-visual-mcp'); ?></th>
+							<th style="width:15%"><?php echo esc_html__('Status', 'easy-visual-mcp'); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+						<?php foreach ($category_tools as $tool): ?>
+							<tr>
+								<td><code><?php echo esc_html($tool['tool_name']); ?></code></td>
+								<td><?php echo esc_html($tool['tool_description']); ?></td>
+								<td><?php echo esc_html(number_format_i18n(intval($tool['token_estimate']))); ?></td>
+								<td>
+									<label>
+										<input type="hidden" name="tool_enabled[<?php echo intval($tool['id']); ?>]" value="0" />
+										<input type="checkbox" name="tool_enabled[<?php echo intval($tool['id']); ?>]" value="1" <?php checked(intval($tool['enabled']), 1); ?> />
+										<?php echo esc_html__('Enabled', 'easy-visual-mcp'); ?>
+									</label>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+					</tbody>
+				</table>
+				<br/>
+			<?php endforeach; ?>
+			
+			<?php submit_button(__('Save Changes', 'easy-visual-mcp')); ?>
+		</form>
+		<?php endif; ?>
+		<?php
+	}
+	
+	private function renderWCToolsTab() {
+		global $wpdb;
+		$table = $wpdb->prefix . 'evmcp_tools';
+		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
+		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+		
+		// Check if there's an active profile
+		$active_profile = $wpdb->get_row("SELECT * FROM {$profiles_table} WHERE is_active = 1", ARRAY_A);
+		
+		// Handle re-seeding
+		if (isset($_POST['evmcp_reseed_nonce']) && wp_verify_nonce($_POST['evmcp_reseed_nonce'], 'evmcp_reseed_tools')) {
+			$wpdb->query("TRUNCATE TABLE {$table}");
+			easy_visual_mcp_seed_initial_tools();
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools reset and reseeded successfully.', 'easy-visual-mcp') . '</p></div>';
+		}
+		
+		// Handle tool enable/disable
+		if (isset($_POST['evmcp_tools_nonce']) && wp_verify_nonce($_POST['evmcp_tools_nonce'], 'evmcp_update_tools')) {
+			if (isset($_POST['tool_enabled']) && is_array($_POST['tool_enabled'])) {
+				foreach ($_POST['tool_enabled'] as $tool_id => $enabled) {
+					$wpdb->update(
+						$table,
+						array('enabled' => intval($enabled), 'updated_at' => current_time('mysql', true)),
+						array('id' => intval($tool_id)),
+						array('%d', '%s'),
+						array('%d')
+					);
+				}
+				// Save current tools state to active profile
+				if ($active_profile) {
+					// Delete existing profile tools
+					$wpdb->delete($profile_tools_table, array('profile_id' => $active_profile['id']), array('%d'));
+					
+					// Get all currently enabled tools (WordPress + WooCommerce)
+					$enabled_tools = $wpdb->get_col("SELECT tool_name FROM {$table} WHERE enabled = 1");
+					
+					// Insert enabled tools into profile
+					if (!empty($enabled_tools)) {
+						foreach ($enabled_tools as $tool_name) {
+							$wpdb->insert(
+								$profile_tools_table,
+								array('profile_id' => $active_profile['id'], 'tool_name' => $tool_name),
+								array('%d', '%s')
+							);
+						}
+					}
+					echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools updated and saved to active profile.', 'easy-visual-mcp') . '</p></div>';
+				} else {
+					echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools updated successfully.', 'easy-visual-mcp') . '</p></div>';
+				}
+			}
+		}
+		
+		// Get all WooCommerce tools grouped by category
+		$tools = $wpdb->get_results("SELECT * FROM {$table} WHERE category LIKE 'WooCommerce%' ORDER BY category, tool_name", ARRAY_A);
+		$enabled_token_total = (int) $wpdb->get_var("SELECT COALESCE(SUM(token_estimate),0) FROM {$table} WHERE category LIKE 'WooCommerce%' AND enabled = 1");
+		
+		$grouped_tools = array();
+		foreach ($tools as $tool) {
+			$category = $tool['category'];
+			if (!isset($grouped_tools[$category])) {
+				$grouped_tools[$category] = array();
+			}
+			$grouped_tools[$category][] = $tool;
+		}
+		
+		?>
+		<p><?php echo esc_html__('Here you can manage which WooCommerce tools are available on the MCP server. Disabled tools will not appear in tools/list.', 'easy-visual-mcp'); ?></p>
+		<p><strong><?php echo esc_html__('Total estimated tokens for enabled WooCommerce tools:', 'easy-visual-mcp'); ?></strong> <?php echo esc_html(number_format_i18n($enabled_token_total)); ?></p>
+		<p class="description"><?php echo esc_html__('Token estimates are approximate (computed from tool name, description, and schema). Use them to compare profiles rather than as an exact billing value.', 'easy-visual-mcp'); ?></p>
+		
+		<?php if ($active_profile): ?>
+			<div class="notice notice-info">
+				<p>
+					<strong>⚠️ <?php echo esc_html__('Active profile:', 'easy-visual-mcp'); ?></strong>
+					<?php echo esc_html($active_profile['profile_name']); ?>
+					<br>
+					<?php echo esc_html__('Changes to tools will be automatically saved to this profile.', 'easy-visual-mcp'); ?>
+					<a href="?page=easy-visual-mcp&tab=profiles" class="button button-small" style="margin-left: 10px;">
+						<?php echo esc_html__('View Profiles', 'easy-visual-mcp'); ?>
+					</a>
+				</p>
+		</div>
+	<?php endif; ?>
+	
+	<?php 
+	// Check if WooCommerce is installed and active
+	$wc_installed = class_exists('WooCommerce');
+	?>
+	
+	<?php if (!$wc_installed): ?>
+		<div class="notice notice-warning">
+			<p>
+				<strong>⚠️ <?php echo esc_html__('WooCommerce is not installed or activated', 'easy-visual-mcp'); ?></strong><br>
+				<?php echo esc_html__('WooCommerce tools are available to configure, but will not work until you install and activate the WooCommerce plugin.', 'easy-visual-mcp'); ?>
+				<?php echo esc_html__('You can enable/disable them now and they will be ready when WooCommerce is active.', 'easy-visual-mcp'); ?>
+			</p>
+		</div>
+	<?php endif; ?>
+	
+	<?php if (empty($grouped_tools)): ?>
+		<div class="notice notice-info">
+			<p><?php echo esc_html__('No WooCommerce tools found in the database. Use the "Reset and Reseed" button in the WordPress tab to load them.', 'easy-visual-mcp'); ?></p>
+		</div>
+	<?php else: ?>		<form method="post" action="">
+			<?php wp_nonce_field('evmcp_update_tools', 'evmcp_tools_nonce'); ?>
+			
+			<?php foreach ($grouped_tools as $category => $category_tools): ?>
+				<?php $category_token_total = 0; foreach ($category_tools as $tool_meta) { $category_token_total += intval($tool_meta['token_estimate']); } ?>
+				<h2><?php echo esc_html($category); ?> <small style="font-weight: normal;">(<?php echo esc_html__('estimated tokens:', 'easy-visual-mcp'); ?> <?php echo esc_html(number_format_i18n($category_token_total)); ?>)</small></h2>
+				<table class="wp-list-table widefat fixed striped">
+					<thead>
+						<tr>
+							<th style="width:25%"><?php echo esc_html__('Tool', 'easy-visual-mcp'); ?></th>
+							<th style="width:45%"><?php echo esc_html__('Description', 'easy-visual-mcp'); ?></th>
+							<th style="width:15%"><?php echo esc_html__('Tokens (~)', 'easy-visual-mcp'); ?></th>
+							<th style="width:15%"><?php echo esc_html__('Status', 'easy-visual-mcp'); ?></th>
+						</tr>
+					</thead>
+					<tbody>
+						<?php foreach ($category_tools as $tool): ?>
+							<tr>
+								<td><code><?php echo esc_html($tool['tool_name']); ?></code></td>
+								<td><?php echo esc_html($tool['tool_description']); ?></td>
+								<td><?php echo esc_html(number_format_i18n(intval($tool['token_estimate']))); ?></td>
+								<td>
+									<label>
+										<input type="hidden" name="tool_enabled[<?php echo intval($tool['id']); ?>]" value="0" />
+										<input type="checkbox" name="tool_enabled[<?php echo intval($tool['id']); ?>]" value="1" <?php checked(intval($tool['enabled']), 1); ?> />
+										<?php echo esc_html__('Enabled', 'easy-visual-mcp'); ?>
+									</label>
+								</td>
+							</tr>
+						<?php endforeach; ?>
+					</tbody>
+				</table>
+				<br/>
+			<?php endforeach; ?>
+			
+			<?php submit_button(__('Save Changes', 'easy-visual-mcp')); ?>
+		</form>
+		<?php endif; ?>
+		<?php
+	}
+	
+	private function renderProfilesTab() {
+		global $wpdb;
+		$profiles_table = $wpdb->prefix . 'evmcp_profiles';
+		$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+		$tools_table = $wpdb->prefix . 'evmcp_tools';
+		
+		// Get all profiles with tool count and estimated tokens
+		$profiles = $wpdb->get_results("
+			SELECT p.*, COUNT(pt.id) as tools_count, COALESCE(SUM(t.token_estimate),0) as tokens_sum
+			FROM {$profiles_table} p
+			LEFT JOIN {$profile_tools_table} pt ON p.id = pt.profile_id
+			LEFT JOIN {$tools_table} t ON pt.tool_name = t.tool_name
+			GROUP BY p.id
+			ORDER BY p.is_system DESC, p.profile_name ASC
+		", ARRAY_A);
+		
+		$total_tools = $wpdb->get_var("SELECT COUNT(*) FROM {$tools_table}");
+		
+		?>
+		<p><?php echo esc_html__('Profiles allow you to quickly switch which tools are available for different use cases.', 'easy-visual-mcp'); ?></p>
+		<p class="description"><?php echo esc_html__('Token totals shown below are approximations based on the enabled tools. They help you gauge relative cost when switching profiles.', 'easy-visual-mcp'); ?></p>
+		
+		<div style="margin: 20px 0;">
+			<button type="button" class="button" id="evmcp_import_profile">
+				<?php echo esc_html__('⬆ Import JSON', 'easy-visual-mcp'); ?>
+			</button>
+			<button type="button" class="button" id="evmcp_restore_system_profiles">
+				<?php echo esc_html__('🔄 Restore System Profiles', 'easy-visual-mcp'); ?>
+			</button>
+		</div>
+		<?php
+		$active_profile_info = null;
+		foreach ($profiles as $profile_row) {
+			if (intval($profile_row['is_active']) === 1) {
+				$active_profile_info = $profile_row;
+				break;
+			}
+		}
+		if ($active_profile_info) :
+		?>
+		<div class="notice notice-info">
+			<p>
+				<strong><?php echo esc_html__('Currently active profile:', 'easy-visual-mcp'); ?></strong>
+				<?php echo esc_html($active_profile_info['profile_name']); ?>
+				<span style="display:block;font-size:12px;"><?php echo esc_html__('Estimated token footprint (sum of enabled tools within the profile):', 'easy-visual-mcp'); ?> <?php echo esc_html(number_format_i18n(intval($active_profile_info['tokens_sum']))); ?></span>
+			</p>
+		</div>
+		<?php endif; ?>
+		
+		<?php if (empty($profiles)): ?>
+			<div class="notice notice-warning">
+				<p><?php echo esc_html__('No profiles found. Use the button above to restore system profiles.', 'easy-visual-mcp'); ?></p>
+			</div>
+		<?php else: ?>
+			<!-- System Profiles -->
+			<?php
+			$system_profiles = array_filter($profiles, function($p) { return intval($p['is_system']) === 1; });
+			if (!empty($system_profiles)):
+			?>
+			<h3><?php echo esc_html__('System Profiles (non-deletable)', 'easy-visual-mcp'); ?></h3>
+			<table class="wp-list-table widefat fixed striped">
+				<thead>
+					<tr>
+						<th style="width: 5%;"></th>
+						<th style="width: 18%;"><?php echo esc_html__('Name', 'easy-visual-mcp'); ?></th>
+						<th style="width: 35%;"><?php echo esc_html__('Description', 'easy-visual-mcp'); ?></th>
+						<th style="width: 12%;"><?php echo esc_html__('Tools', 'easy-visual-mcp'); ?></th>
+						<th style="width: 12%;"><?php echo esc_html__('Tokens (~)', 'easy-visual-mcp'); ?></th>
+						<th style="width: 18%;"><?php echo esc_html__('Actions', 'easy-visual-mcp'); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php foreach ($system_profiles as $profile): ?>
+						<?php
+						// Get tools for this profile
+						$profile_tools_rows = $wpdb->get_results($wpdb->prepare(
+							"SELECT t.tool_name FROM {$profile_tools_table} pt LEFT JOIN {$tools_table} t ON pt.tool_name = t.tool_name WHERE pt.profile_id = %d ORDER BY t.tool_name",
+							$profile['id']
+						), ARRAY_A);
+						$profile_tools_list = array();
+						if (!empty($profile_tools_rows)) {
+							foreach ($profile_tools_rows as $tool_row) {
+								$profile_tools_list[] = $tool_row['tool_name'];
+							}
+						}
+						$tools_list_html = !empty($profile_tools_list) ? implode(', ', $profile_tools_list) : esc_html__('None', 'easy-visual-mcp');
+						?>
+						<tr>
+							<td>
+								<?php if (intval($profile['is_active']) === 1): ?>
+									<span style="color: #2271b1; font-size: 20px;">●</span>
+								<?php endif; ?>
+							</td>
+							<td><strong><?php echo esc_html($profile['profile_name']); ?></strong></td>
+							<td>
+								<?php echo esc_html($profile['profile_description']); ?>
+								<br>
+								<a href="#" class="evmcp-view-tools" data-tools="<?php echo esc_attr($tools_list_html); ?>" style="font-size: 12px; text-decoration: none;">
+									📋 <?php echo esc_html__('View tools', 'easy-visual-mcp'); ?>
+								</a>
+							</td>
+							<td><?php echo esc_html(intval($profile['tools_count']) . '/' . intval($total_tools)); ?></td>
+							<td><?php echo esc_html(number_format_i18n(intval($profile['tokens_sum']))); ?></td>
+							<td>
+								<button type="button" class="button evmcp-apply-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
+									<?php echo esc_html__('Apply', 'easy-visual-mcp'); ?>
+								</button>
+								<button type="button" class="button evmcp-duplicate-profile" data-profile-id="<?php echo intval($profile['id']); ?>">
+									<?php echo esc_html__('Duplicate', 'easy-visual-mcp'); ?>
+								</button>
+								<button type="button" class="button evmcp-export-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
+									<?php echo esc_html__('Export', 'easy-visual-mcp'); ?>
+								</button>
+							</td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+			<?php endif; ?>
+			
+			<!-- Custom Profiles -->
+			<?php
+			$custom_profiles = array_filter($profiles, function($p) { return intval($p['is_system']) === 0; });
+			if (!empty($custom_profiles)):
+			?>
+			<h3 style="margin-top: 30px;"><?php echo esc_html__('Custom Profiles', 'easy-visual-mcp'); ?></h3>
+			<table class="wp-list-table widefat fixed striped">
+				<thead>
+					<tr>
+						<th style="width: 5%;"></th>
+						<th style="width: 18%;"><?php echo esc_html__('Name', 'easy-visual-mcp'); ?></th>
+						<th style="width: 35%;"><?php echo esc_html__('Description', 'easy-visual-mcp'); ?></th>
+						<th style="width: 12%;"><?php echo esc_html__('Tools', 'easy-visual-mcp'); ?></th>
+						<th style="width: 12%;"><?php echo esc_html__('Tokens (~)', 'easy-visual-mcp'); ?></th>
+						<th style="width: 18%;"><?php echo esc_html__('Actions', 'easy-visual-mcp'); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php foreach ($custom_profiles as $profile): ?>
+						<?php
+						// Get tools for this profile
+						$profile_tools_rows = $wpdb->get_results($wpdb->prepare(
+							"SELECT t.tool_name, COALESCE(t.token_estimate,0) as token_estimate FROM {$profile_tools_table} pt LEFT JOIN {$tools_table} t ON pt.tool_name = t.tool_name WHERE pt.profile_id = %d ORDER BY t.tool_name",
+							$profile['id']
+						), ARRAY_A);
+						$profile_tools_list = array();
+						if (!empty($profile_tools_rows)) {
+							foreach ($profile_tools_rows as $tool_row) {
+								$token_str = number_format_i18n(intval($tool_row['token_estimate']));
+								$profile_tools_list[] = sprintf('%s (≈%s)', $tool_row['tool_name'], $token_str);
+							}
+						}
+						$tools_list_html = !empty($profile_tools_list) ? implode(', ', $profile_tools_list) : esc_html__('None', 'easy-visual-mcp');
+						?>
+						<tr>
+							<td>
+								<?php if (intval($profile['is_active']) === 1): ?>
+									<span style="color: #2271b1; font-size: 20px;">●</span>
+								<?php endif; ?>
+							</td>
+							<td><strong><?php echo esc_html($profile['profile_name']); ?></strong></td>
+							<td>
+								<?php echo esc_html($profile['profile_description']); ?>
+								<br>
+								<a href="#" class="evmcp-view-tools" data-tools="<?php echo esc_attr($tools_list_html); ?>" style="font-size: 12px; text-decoration: none;">
+									📋 <?php echo esc_html__('View tools', 'easy-visual-mcp'); ?>
+								</a>
+							</td>
+							<td><?php echo esc_html(intval($profile['tools_count']) . '/' . intval($total_tools)); ?></td>
+							<td><?php echo esc_html(number_format_i18n(intval($profile['tokens_sum']))); ?></td>
+							<td>
+								<button type="button" class="button evmcp-apply-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
+									<?php echo esc_html__('Apply', 'easy-visual-mcp'); ?>
+								</button>
+								<button type="button" class="button evmcp-edit-profile" data-profile-id="<?php echo intval($profile['id']); ?>">
+									<?php echo esc_html__('Edit', 'easy-visual-mcp'); ?>
+								</button>
+								<button type="button" class="button evmcp-duplicate-profile" data-profile-id="<?php echo intval($profile['id']); ?>">
+									<?php echo esc_html__('Duplicate', 'easy-visual-mcp'); ?>
+								</button>
+								<button type="button" class="button evmcp-export-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
+									<?php echo esc_html__('Export', 'easy-visual-mcp'); ?>
+								</button>
+								<button type="button" class="button button-link-delete evmcp-delete-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
+									<?php echo esc_html__('Delete', 'easy-visual-mcp'); ?>
+								</button>
+							</td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+			<?php endif; ?>
+		<?php endif; ?>
+		
+		<!-- Hidden file input for import -->
+		<input type="file" id="evmcp_import_file" accept=".json" style="display: none;" />
+		
+		<script>
+		(function(){
+			// Helper for AJAX calls
+			function evmcpAjax(action, data, successMsg) {
+				data.action = action;
+				data._wpnonce = '<?php echo wp_create_nonce('evmcp_profiles'); ?>';
+				
+				return fetch(ajaxurl, {
+					method: 'POST',
+					headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+					body: new URLSearchParams(data)
+				}).then(r => r.json()).then(j => {
+					if (j.success) {
+						if (successMsg) alert(successMsg);
+						location.reload();
+					} else {
+						alert('Error: ' + (j.data && j.data.message ? j.data.message : 'Unknown error'));
+					}
+				}).catch(e => alert('Error: ' + e));
+			}
+			
+			// Apply profile
+			document.querySelectorAll('.evmcp-apply-profile').forEach(btn => {
+				btn.addEventListener('click', function() {
+					if (!confirm('Apply profile "' + this.dataset.profileName + '"?\n\nThis will change the enabled tools.')) return;
+					evmcpAjax('evmcp_apply_profile', {profile_id: this.dataset.profileId}, 'Profile applied successfully');
+				});
+			});
+			
+			// Delete profile
+			document.querySelectorAll('.evmcp-delete-profile').forEach(btn => {
+				btn.addEventListener('click', function() {
+					if (!confirm('Delete profile "' + this.dataset.profileName + '"?\n\nThis action cannot be undone.')) return;
+					evmcpAjax('evmcp_delete_profile', {profile_id: this.dataset.profileId}, 'Profile deleted successfully');
+				});
+			});
+			
+			// Duplicate profile
+			document.querySelectorAll('.evmcp-duplicate-profile').forEach(btn => {
+				btn.addEventListener('click', function() {
+					evmcpAjax('evmcp_duplicate_profile', {profile_id: this.dataset.profileId}, 'Profile duplicated successfully');
+				});
+			});
+			
+			// Export profile
+			document.querySelectorAll('.evmcp-export-profile').forEach(btn => {
+				btn.addEventListener('click', function() {
+					const profileId = this.dataset.profileId;
+					const profileName = this.dataset.profileName;
+					window.location.href = ajaxurl + '?action=evmcp_export_profile&profile_id=' + profileId + '&_wpnonce=<?php echo wp_create_nonce('evmcp_profiles'); ?>';
+				});
+			});
+			
+			// Import profile
+			document.getElementById('evmcp_import_profile').addEventListener('click', function() {
+				document.getElementById('evmcp_import_file').click();
+			});
+			
+			document.getElementById('evmcp_import_file').addEventListener('change', function() {
+				if (!this.files.length) return;
+				const file = this.files[0];
+				const reader = new FileReader();
+				reader.onload = function(e) {
+					try {
+						const json = JSON.parse(e.target.result);
+						evmcpAjax('evmcp_import_profile', {profile_json: JSON.stringify(json)}, 'Profile imported successfully');
+					} catch (err) {
+						alert('Error reading JSON file: ' + err.message);
+					}
+				};
+				reader.readAsText(file);
+			});
+			
+			// Restore system profiles
+			document.getElementById('evmcp_restore_system_profiles').addEventListener('click', function() {
+				if (!confirm('Restore system profiles?\n\nThis will recreate the 8 predefined profiles.')) return;
+				evmcpAjax('evmcp_restore_system_profiles', {}, 'System profiles restored');
+			});
+			
+			// Edit profile (TODO: implement modal)
+			document.querySelectorAll('.evmcp-edit-profile').forEach(btn => {
+				btn.addEventListener('click', function() {
+					alert('Profile creation/editing functionality with modal will be implemented in the next phase');
+				});
+			});
+			
+			// View tools tooltip
+			var tooltip = null;
+			document.querySelectorAll('.evmcp-view-tools').forEach(link => {
+				link.addEventListener('mouseenter', function(e) {
+					e.preventDefault();
+					// Remove existing tooltip
+					if (tooltip) tooltip.remove();
+					
+					// Create tooltip
+					tooltip = document.createElement('div');
+					tooltip.style.cssText = 'position: absolute; background: #fff; border: 1px solid #ccc; padding: 10px; max-width: 400px; max-height: 300px; overflow-y: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 9999; font-size: 12px; line-height: 1.5;';
+					tooltip.innerHTML = '<strong><?php echo esc_js(__('Included tools:', 'easy-visual-mcp')); ?></strong><br>' + this.dataset.tools;
+					document.body.appendChild(tooltip);
+					
+					// Position tooltip near mouse
+					var rect = this.getBoundingClientRect();
+					tooltip.style.left = (rect.left + window.scrollX) + 'px';
+					tooltip.style.top = (rect.bottom + window.scrollY + 5) + 'px';
+				});
+				
+				link.addEventListener('mouseleave', function() {
+					setTimeout(function() {
+						if (tooltip) {
+							tooltip.remove();
+							tooltip = null;
+						}
+					}, 200);
+				});
+				
+				link.addEventListener('click', function(e) {
+					e.preventDefault();
+				});
 			});
 		})();
 		</script>
 		<?php
 	}
 }
+
+
+
