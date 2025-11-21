@@ -1,14 +1,14 @@
 <?php
 /*
-Plugin Name: Easy Visual MCP
-Plugin URI: https://github.com/estebanstifli/easy-visual-mcp
+Plugin Name: StifLi Flex MCP
+Plugin URI: https://github.com/estebanstifli/stifli-flex-mcp
 Description: Transform your WordPress site into a Model Context Protocol (MCP) server. Expose 129 tools (63 WordPress, 65 WooCommerce, 1 Core) that AI agents like ChatGPT, Claude, and LibreChat can use to manage your WordPress and WooCommerce site via JSON-RPC 2.0.
 Version: 1.0.0
 Author: estebandestifli
 Requires PHP: 7.4
 License: GPL v2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
-Text Domain: easy-visual-mcp
+Text Domain: stifli-flex-mcp
 Domain Path: /languages
  */
 
@@ -17,14 +17,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // define debug constant
-if ( ! defined( 'EVMCP_DEBUG' ) ) {
-	define( 'EVMCP_DEBUG', false );
+if ( ! defined( 'SFLMCP_DEBUG' ) ) {
+	define( 'SFLMCP_DEBUG', false );
 }
 
 // Debug logging function
-if (!function_exists('easy_visual_mcp_log')) {
-	function easy_visual_mcp_log($message, array $context = []) {
-        if (!defined('EVMCP_DEBUG') || EVMCP_DEBUG !== true) {
+if (!function_exists('stifli_flex_mcp_log')) {
+	function stifli_flex_mcp_log($message, array $context = []) {
+        if (!defined('SFLMCP_DEBUG') || SFLMCP_DEBUG !== true) {
             return;
         }
 
@@ -48,7 +48,7 @@ if (!function_exists('easy_visual_mcp_log')) {
                 $message .= ' ' . $encoded_context;
             }
         }
-		error_log('[EVMCP] ' . $message); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- gated by EVMCP_DEBUG for opt-in debugging only
+		error_log('[SFLMCP] ' . $message); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- gated by SFLMCP_DEBUG for opt-in debugging only
 	}
 }
 
@@ -69,9 +69,9 @@ require_once __DIR__ . '/mod.php';
  * phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter
  */
 
-function easy_visual_mcp_maybe_create_queue_table() {
+function stifli_flex_mcp_maybe_create_queue_table() {
 	global $wpdb;
-	$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_queue', false);
+	$table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_queue', false);
 	$like = $wpdb->esc_like($table);
 	$exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $like));
 	if ($exists === $table) {
@@ -90,16 +90,16 @@ function easy_visual_mcp_maybe_create_queue_table() {
 		KEY session_created (session_id, created_at),
 		KEY expires_at (expires_at)
 	) %s;",
-		EasyVisualMcpUtils::getPrefixedTable('evmcp_queue'),
+		StifliFlexMcpUtils::getPrefixedTable('sflmcp_queue'),
 		$charset_collate
 	);
 	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 	dbDelta($sql);
 }
 
-function easy_visual_mcp_maybe_create_tools_table() {
+function stifli_flex_mcp_maybe_create_tools_table() {
 	global $wpdb;
-	$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
+	$table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools', false);
 	$like = $wpdb->esc_like($table);
 	$exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $like));
 	if ($exists === $table) {
@@ -121,53 +121,53 @@ function easy_visual_mcp_maybe_create_tools_table() {
 		KEY category (category),
 		KEY enabled (enabled)
 	) %s;",
-		EasyVisualMcpUtils::getPrefixedTable('evmcp_tools'),
+		StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools'),
 		$charset_collate
 	);
 	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 	dbDelta($sql);
 }
 
-function easy_visual_mcp_maybe_add_tools_token_column() {
+function stifli_flex_mcp_maybe_add_tools_token_column() {
 	global $wpdb;
-	$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
+	$table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools', false);
 	$like = $wpdb->esc_like($table);
 	$exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $like));
 	if ($exists !== $table) {
 		return;
 	}
-	$columns_query = EasyVisualMcpUtils::formatSqlWithTables(
+	$columns_query = StifliFlexMcpUtils::formatSqlWithTables(
 		'SHOW COLUMNS FROM %s LIKE %%s',
-		'evmcp_tools'
+		'sflmcp_tools'
 	);
 	$column = $wpdb->get_var($wpdb->prepare($columns_query, 'token_estimate'));
 	if (null === $column) {
 		$wpdb->query(
 			sprintf(
 				'ALTER TABLE %s ADD COLUMN token_estimate INT UNSIGNED NOT NULL DEFAULT 0 AFTER enabled',
-				EasyVisualMcpUtils::getPrefixedTable('evmcp_tools')
+				StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools')
 			)
 		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange,WordPress.DB.PreparedSQL.NotPrepared -- schema migration for plugin-managed table
 	}
 }
 
-function easy_visual_mcp_sync_tool_token_estimates() {
+function stifli_flex_mcp_sync_tool_token_estimates() {
 	global $wpdb;
-	$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
+	$table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools', false);
 	$like = $wpdb->esc_like($table);
 	$exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $like));
-	if ($exists !== $table || !class_exists('EasyVisualMcpModel')) {
+	if ($exists !== $table || !class_exists('StifliFlexMcpModel')) {
 		return;
 	}
-	$tools_select = EasyVisualMcpUtils::formatSqlWithTables(
+	$tools_select = StifliFlexMcpUtils::formatSqlWithTables(
 		'SELECT tool_name, tool_description, token_estimate FROM %s WHERE 1 = %%d',
-		'evmcp_tools'
+		'sflmcp_tools'
 	);
 	$rows = $wpdb->get_results($wpdb->prepare($tools_select, 1), ARRAY_A);
 	if (!is_array($rows)) {
 		return;
 	}
-	$model = new EasyVisualMcpModel();
+	$model = new StifliFlexMcpModel();
 	$definitions = $model->getTools();
 	if (!is_array($definitions)) {
 		$definitions = array();
@@ -188,14 +188,14 @@ function easy_visual_mcp_sync_tool_token_estimates() {
 		}
 		$current = isset($row['token_estimate']) ? (int) $row['token_estimate'] : 0;
 		if (isset($definitionMap[$name])) {
-			$estimate = EasyVisualMcpUtils::estimateToolTokenUsage($definitionMap[$name]);
+			$estimate = StifliFlexMcpUtils::estimateToolTokenUsage($definitionMap[$name]);
 		} else {
 			$desc = isset($row['tool_description']) ? (string) $row['tool_description'] : '';
 			$fallbackDef = array(
 				'name' => $name,
 				'description' => $desc,
 			);
-			$estimate = EasyVisualMcpUtils::estimateToolTokenUsage($fallbackDef);
+			$estimate = StifliFlexMcpUtils::estimateToolTokenUsage($fallbackDef);
 			if ($estimate <= 0 && '' !== $desc) {
 				$estimate = (int) ceil(strlen($desc) / 4);
 			}
@@ -207,7 +207,7 @@ function easy_visual_mcp_sync_tool_token_estimates() {
 			continue;
 		}
 		$wpdb->update(
-			EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false),
+			StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools', false),
 			array(
 				'token_estimate' => $estimate,
 				'updated_at' => $now,
@@ -219,18 +219,18 @@ function easy_visual_mcp_sync_tool_token_estimates() {
 	}
 }
 
-add_action('woocommerce_loaded', 'easy_visual_mcp_sync_tool_token_estimates', 20);
+add_action('woocommerce_loaded', 'stifli_flex_mcp_sync_tool_token_estimates', 20);
 if (did_action('woocommerce_loaded')) {
-	easy_visual_mcp_sync_tool_token_estimates();
+	stifli_flex_mcp_sync_tool_token_estimates();
 }
 
 /*
  * Custom data layer for plugin-managed tables.
  * phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,PluginCheck.Security.DirectDB.UnescapedDBParameter
  */
-function easy_visual_mcp_maybe_create_profiles_table() {
+function stifli_flex_mcp_maybe_create_profiles_table() {
 	global $wpdb;
-	$table = $wpdb->prefix . 'evmcp_profiles';
+	$table = $wpdb->prefix . 'sflmcp_profiles';
 	$like = $wpdb->esc_like($table);
 	$exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $like));
 	if ($exists === $table) {
@@ -253,9 +253,9 @@ function easy_visual_mcp_maybe_create_profiles_table() {
 	dbDelta($sql);
 }
 
-function easy_visual_mcp_maybe_create_profile_tools_table() {
+function stifli_flex_mcp_maybe_create_profile_tools_table() {
 	global $wpdb;
-	$table = $wpdb->prefix . 'evmcp_profile_tools';
+	$table = $wpdb->prefix . 'sflmcp_profile_tools';
 	$like = $wpdb->esc_like($table);
 	$exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $like));
 	if ($exists === $table) {
@@ -275,9 +275,9 @@ function easy_visual_mcp_maybe_create_profile_tools_table() {
 	dbDelta($sql);
 }
 
-function easy_visual_mcp_seed_initial_tools() {
+function stifli_flex_mcp_seed_initial_tools() {
 	global $wpdb;
-	$table = $wpdb->prefix . 'evmcp_tools';
+	$table = $wpdb->prefix . 'sflmcp_tools';
 	
 	// Check if already seeded
 	$count = $wpdb->get_var("SELECT COUNT(*) FROM {$table}");
@@ -508,10 +508,10 @@ function easy_visual_mcp_seed_initial_tools() {
 	}
 }
 
-function easy_visual_mcp_seed_system_profiles() {
+function stifli_flex_mcp_seed_system_profiles() {
 	global $wpdb;
-	$profiles_table = $wpdb->prefix . 'evmcp_profiles';
-	$profile_tools_table = $wpdb->prefix . 'evmcp_profile_tools';
+	$profiles_table = $wpdb->prefix . 'sflmcp_profiles';
+	$profile_tools_table = $wpdb->prefix . 'sflmcp_profile_tools';
 	
 	// Check if system profiles already seeded
 	$count = $wpdb->get_var("SELECT COUNT(*) FROM {$profiles_table} WHERE is_system = 1");
@@ -720,7 +720,7 @@ function easy_visual_mcp_seed_system_profiles() {
 	);
 	
 	// Get all available tools for "Complete Site" profile
-	$all_tools = $wpdb->get_col("SELECT tool_name FROM {$wpdb->prefix}evmcp_tools");
+	$all_tools = $wpdb->get_col("SELECT tool_name FROM {$wpdb->prefix}sflmcp_tools");
 	
 	// Insert profiles
 	foreach ($system_profiles as $profile) {
@@ -757,43 +757,43 @@ function easy_visual_mcp_seed_system_profiles() {
 	}
 }
 
-function easy_visual_mcp_ensure_clean_queue_event() {
-	$event = wp_get_scheduled_event('evmcp_clean_queue');
+function stifli_flex_mcp_ensure_clean_queue_event() {
+	$event = wp_get_scheduled_event('sflmcp_clean_queue');
 	if (!$event) {
-		wp_schedule_event(time() + HOUR_IN_SECONDS, 'hourly', 'evmcp_clean_queue');
+		wp_schedule_event(time() + HOUR_IN_SECONDS, 'hourly', 'sflmcp_clean_queue');
 		return;
 	}
 	$schedule = isset($event->schedule) ? $event->schedule : '';
 	if ('hourly' !== $schedule) {
 		$args = (isset($event->args) && is_array($event->args)) ? $event->args : array();
-		wp_unschedule_event($event->timestamp, 'evmcp_clean_queue', $args);
-		wp_schedule_event(time() + HOUR_IN_SECONDS, 'hourly', 'evmcp_clean_queue');
+		wp_unschedule_event($event->timestamp, 'sflmcp_clean_queue', $args);
+		wp_schedule_event(time() + HOUR_IN_SECONDS, 'hourly', 'sflmcp_clean_queue');
 	}
 }
 
-register_activation_hook(__FILE__, 'easy_visual_mcp_activate');
-register_deactivation_hook(__FILE__, 'easy_visual_mcp_deactivate');
+register_activation_hook(__FILE__, 'stifli_flex_mcp_activate');
+register_deactivation_hook(__FILE__, 'stifli_flex_mcp_deactivate');
 
-function easy_visual_mcp_activate() {
-	easy_visual_mcp_maybe_create_queue_table();
-	easy_visual_mcp_maybe_create_tools_table();
-	easy_visual_mcp_maybe_add_tools_token_column();
-	easy_visual_mcp_maybe_create_profiles_table();
-	easy_visual_mcp_maybe_create_profile_tools_table();
-	easy_visual_mcp_seed_initial_tools();
-	easy_visual_mcp_seed_system_profiles();
-	easy_visual_mcp_sync_tool_token_estimates();
-	easy_visual_mcp_ensure_clean_queue_event();
+function stifli_flex_mcp_activate() {
+	stifli_flex_mcp_maybe_create_queue_table();
+	stifli_flex_mcp_maybe_create_tools_table();
+	stifli_flex_mcp_maybe_add_tools_token_column();
+	stifli_flex_mcp_maybe_create_profiles_table();
+	stifli_flex_mcp_maybe_create_profile_tools_table();
+	stifli_flex_mcp_seed_initial_tools();
+	stifli_flex_mcp_seed_system_profiles();
+	stifli_flex_mcp_sync_tool_token_estimates();
+	stifli_flex_mcp_ensure_clean_queue_event();
 }
 
-function easy_visual_mcp_deactivate() {
-	wp_clear_scheduled_hook('evmcp_clean_queue');
+function stifli_flex_mcp_deactivate() {
+	wp_clear_scheduled_hook('sflmcp_clean_queue');
 }
 
-add_action('evmcp_clean_queue', 'easy_visual_mcp_clean_queue');
-function easy_visual_mcp_clean_queue() {
+add_action('sflmcp_clean_queue', 'stifli_flex_mcp_clean_queue');
+function stifli_flex_mcp_clean_queue() {
 	global $wpdb;
-	$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_queue');
+	$table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_queue');
 	$now = gmdate('Y-m-d H:i:s');
 	$wpdb->query(
 		$wpdb->prepare(
@@ -807,17 +807,17 @@ function easy_visual_mcp_clean_queue() {
 
 // Plugin initialization
 add_action('plugins_loaded', function() {
-	easy_visual_mcp_maybe_create_queue_table();
-	easy_visual_mcp_maybe_create_tools_table();
-	easy_visual_mcp_maybe_add_tools_token_column();
-	easy_visual_mcp_maybe_create_profiles_table();
-	easy_visual_mcp_maybe_create_profile_tools_table();
-	easy_visual_mcp_seed_initial_tools();
-	easy_visual_mcp_seed_system_profiles();
-	easy_visual_mcp_sync_tool_token_estimates();
-	easy_visual_mcp_ensure_clean_queue_event();
-	if (class_exists('EasyVisualMcp')) {
-		$mod = new EasyVisualMcp();
+	stifli_flex_mcp_maybe_create_queue_table();
+	stifli_flex_mcp_maybe_create_tools_table();
+	stifli_flex_mcp_maybe_add_tools_token_column();
+	stifli_flex_mcp_maybe_create_profiles_table();
+	stifli_flex_mcp_maybe_create_profile_tools_table();
+	stifli_flex_mcp_seed_initial_tools();
+	stifli_flex_mcp_seed_system_profiles();
+	stifli_flex_mcp_sync_tool_token_estimates();
+	stifli_flex_mcp_ensure_clean_queue_event();
+	if (class_exists('StifliFlexMcp')) {
+		$mod = new StifliFlexMcp();
 		$mod->init();
 	}
 });

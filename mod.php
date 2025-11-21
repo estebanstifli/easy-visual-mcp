@@ -2,11 +2,11 @@
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
-class EasyVisualMcp {
+class StifliFlexMcp {
 	private $logging = false;
 	private $mcpToken = null;
 	private $addedFilter = false;
-	private $namespace = 'easy-visual-mcp/v1';
+	private $namespace = 'stifli-flex-mcp/v1';
 	private $sessionID = null;
 	private $lastAction = 0;
 	private $protocolVersion = '2025-06-18';
@@ -17,7 +17,7 @@ class EasyVisualMcp {
 	public function __construct() {
 		global $wpdb;
 		if (isset($wpdb->prefix)) {
-			$this->queueTable = EasyVisualMcpUtils::getPrefixedTable('evmcp_queue', false);
+			$this->queueTable = StifliFlexMcpUtils::getPrefixedTable('sflmcp_queue', false);
 		}
 	}
 
@@ -28,29 +28,29 @@ class EasyVisualMcp {
 			add_action('admin_menu', array($this, 'registerAdmin'));
 			add_action('admin_init', array($this, 'registerSettings'));
 			// AJAX handler for token generation
-			add_action('wp_ajax_evmcp_generate_token', array($this, 'ajax_generate_token'));
+			add_action('wp_ajax_sflmcp_generate_token', array($this, 'ajax_generate_token'));
 			// AJAX handlers for profiles management
-			add_action('wp_ajax_evmcp_create_profile', array($this, 'ajax_create_profile'));
-			add_action('wp_ajax_evmcp_update_profile', array($this, 'ajax_update_profile'));
-			add_action('wp_ajax_evmcp_delete_profile', array($this, 'ajax_delete_profile'));
-			add_action('wp_ajax_evmcp_duplicate_profile', array($this, 'ajax_duplicate_profile'));
-			add_action('wp_ajax_evmcp_apply_profile', array($this, 'ajax_apply_profile'));
-			add_action('wp_ajax_evmcp_export_profile', array($this, 'ajax_export_profile'));
-			add_action('wp_ajax_evmcp_import_profile', array($this, 'ajax_import_profile'));
-			add_action('wp_ajax_evmcp_restore_system_profiles', array($this, 'ajax_restore_system_profiles'));
+			add_action('wp_ajax_sflmcp_create_profile', array($this, 'ajax_create_profile'));
+			add_action('wp_ajax_sflmcp_update_profile', array($this, 'ajax_update_profile'));
+			add_action('wp_ajax_sflmcp_delete_profile', array($this, 'ajax_delete_profile'));
+			add_action('wp_ajax_sflmcp_duplicate_profile', array($this, 'ajax_duplicate_profile'));
+			add_action('wp_ajax_sflmcp_apply_profile', array($this, 'ajax_apply_profile'));
+			add_action('wp_ajax_sflmcp_export_profile', array($this, 'ajax_export_profile'));
+			add_action('wp_ajax_sflmcp_import_profile', array($this, 'ajax_import_profile'));
+			add_action('wp_ajax_sflmcp_restore_system_profiles', array($this, 'ajax_restore_system_profiles'));
 		}
 	}
 
 	public function restApiInit() {
 		if ($this->mcpToken === null) {
 			// Try loading a configured token from options (admin can set this option)
-			$this->mcpToken = get_option('easy_visual_mcp_token', '');
+			$this->mcpToken = get_option('stifli_flex_mcp_token', '');
 			if (empty($this->mcpToken)) {
 				$this->mcpToken = null;
 			}
 		}
 		if (!empty($this->mcpToken) && !$this->addedFilter) {
-			EasyVisualMcpDispatcher::addFilter('allow_evmcp', array($this, 'authViaBeaberToken'), 10, 2);
+			StifliFlexMcpDispatcher::addFilter('allow_SFLMCP', array($this, 'authViaBeaberToken'), 10, 2);
 			$this->addedFilter = true;
 		}
 		register_rest_route($this->namespace, '/sse', array(
@@ -74,20 +74,20 @@ class EasyVisualMcp {
 				return $this->canAccessMCP($request);
 			},
 		));
-		EasyVisualMcpDispatcher::addFilter('evmcp_callback', array($this, 'handleCallback'), 10, 4);
+		StifliFlexMcpDispatcher::addFilter('sflmcp_callback', array($this, 'handleCallback'), 10, 4);
 	}
 
 	public function canAccessMCP( $request ) {
 		// If no token configured, allow public access
 		if (empty($this->mcpToken)) {
-			easy_visual_mcp_log('canAccessMCP: no token configured, allowing public access');
+			stifli_flex_mcp_log('canAccessMCP: no token configured, allowing public access');
 			return true;
 		}
 		$isAdmin = current_user_can('manage_options');
 		$hdr = $request->get_header('Authorization');
 		$qp = $request->get_param('token');
 		$masked = $this->maskToken($this->mcpToken);
-		easy_visual_mcp_log(sprintf('canAccessMCP: isAdmin=%s, header=%s, query=%s, stored=%s', $isAdmin ? '1':'0', $hdr ? 'present' : 'none', $qp ? 'present' : 'none', $masked));
+		stifli_flex_mcp_log(sprintf('canAccessMCP: isAdmin=%s, header=%s, query=%s, stored=%s', $isAdmin ? '1':'0', $hdr ? 'present' : 'none', $qp ? 'present' : 'none', $masked));
 		// Fallback: check Authorization header or token query param directly (normalize before compare)
 		try {
 			$hdrValue = $request->get_header('Authorization');
@@ -107,25 +107,25 @@ class EasyVisualMcp {
 				$stored = sanitize_text_field((string)$this->mcpToken);
 				if (!empty($stored) && hash_equals($stored, $norm)) {
 					// matched token -> set mapped user or fallback admin
-					$user_id = intval(get_option('easy_visual_mcp_token_user', 0));
+					$user_id = intval(get_option('stifli_flex_mcp_token_user', 0));
 					if ($user_id && get_userdata($user_id)) {
 						wp_set_current_user($user_id);
 					} else {
-						if (class_exists('EasyVisualMcpUtils') && method_exists('EasyVisualMcpUtils', 'setAdminUser')) {
-							EasyVisualMcpUtils::setAdminUser();
+						if (class_exists('StifliFlexMcpUtils') && method_exists('StifliFlexMcpUtils', 'setAdminUser')) {
+							StifliFlexMcpUtils::setAdminUser();
 						}
 					}
-					easy_visual_mcp_log('canAccessMCP: token match -> access granted');
+					stifli_flex_mcp_log('canAccessMCP: token match -> access granted');
 					return true;
 				} else {
-					easy_visual_mcp_log('canAccessMCP: token provided but did not match stored token');
+					stifli_flex_mcp_log('canAccessMCP: token provided but did not match stored token');
 				}
 			}
 		} catch (Exception $e) {
-			easy_visual_mcp_log('canAccessMCP: exception during token fallback: ' . $e->getMessage());
+			stifli_flex_mcp_log('canAccessMCP: exception during token fallback: ' . $e->getMessage());
 		}
 
-		return EasyVisualMcpDispatcher::applyFilters('allow_evmcp', $isAdmin, $request);
+		return StifliFlexMcpDispatcher::applyFilters('allow_SFLMCP', $isAdmin, $request);
 	}
 
 	/**
@@ -144,7 +144,7 @@ class EasyVisualMcp {
 		}
 		$tools = $this->getModel()->getTools();
 		if (!isset($tools[$tool])) {
-			EasyVisualMcpFrame::_()->saveDebugLogging('Tool not found ' . $tool, false, 'EVMCP');
+			StifliFlexMcpFrame::_()->saveDebugLogging('Tool not found ' . $tool, false, 'SFLMCP');
 			return $result;
 		}
 		return $this->getModel()->dispatchTool($tool, $args, $id);
@@ -156,14 +156,14 @@ class EasyVisualMcp {
 			$token = sanitize_text_field($request->get_param('token'));
 			if ($token && hash_equals($this->mcpToken, $token)) {
 				// If a specific user ID is configured for the token, switch to that user.
-				$user_id = intval(get_option('easy_visual_mcp_token_user', 0));
+				$user_id = intval(get_option('stifli_flex_mcp_token_user', 0));
 				if ($user_id && get_userdata($user_id)) {
 					wp_set_current_user($user_id);
 					return true;
 				}
 				// fallback: previous behavior
-				if (class_exists('EasyVisualMcpUtils') && method_exists('EasyVisualMcpUtils', 'setAdminUser')) {
-					EasyVisualMcpUtils::setAdminUser();
+				if (class_exists('StifliFlexMcpUtils') && method_exists('StifliFlexMcpUtils', 'setAdminUser')) {
+					StifliFlexMcpUtils::setAdminUser();
 				}
 				return true;
 			}
@@ -172,13 +172,13 @@ class EasyVisualMcp {
 		if ($hdr && preg_match('/Bearer\s+(.+)/i', $hdr, $m)) {
 			$token = trim($m[1]);
 			if (!empty($this->mcpToken) && hash_equals($this->mcpToken, $token)) {
-				$user_id = intval(get_option('easy_visual_mcp_token_user', 0));
+				$user_id = intval(get_option('stifli_flex_mcp_token_user', 0));
 				if ($user_id && get_userdata($user_id)) {
 					wp_set_current_user($user_id);
 					return true;
 				}
-				if (class_exists('EasyVisualMcpUtils') && method_exists('EasyVisualMcpUtils', 'setAdminUser')) {
-					EasyVisualMcpUtils::setAdminUser();
+				if (class_exists('StifliFlexMcpUtils') && method_exists('StifliFlexMcpUtils', 'setAdminUser')) {
+					StifliFlexMcpUtils::setAdminUser();
 				}
 				return true;
 			}
@@ -202,7 +202,7 @@ class EasyVisualMcp {
 		$ua = $uaHeader ? sanitize_text_field( $uaHeader ) : 'n/a';
 		$hdrAuth = $request->get_header('Authorization') ? 'present' : 'none';
 		$qp = $request->get_param('token') ? 'present' : 'none';
-		easy_visual_mcp_log(sprintf('handleSSE start: remote=%s, method=%s, auth_header=%s, query_token=%s, body_len=%d, ua=%s', $remote, $request->get_method(), $hdrAuth, $qp, strlen($body), $ua));
+		stifli_flex_mcp_log(sprintf('handleSSE start: remote=%s, method=%s, auth_header=%s, query_token=%s, body_len=%d, ua=%s', $remote, $request->get_method(), $hdrAuth, $qp, strlen($body), $ua));
 		if ($request->get_method() === 'POST' && !empty($body)) {
 			$data = json_decode($body, true);
 			if ($data && isset($data['method'])) {
@@ -232,22 +232,22 @@ class EasyVisualMcp {
 		if (!empty($this->mcpToken)) {
 			$msgUri .= '&token=' . rawurlencode((string) $this->mcpToken);
 		}
-		easy_visual_mcp_log('handleSSE: sessionID=' . $this->sessionID . ' msgUri=' . $msgUri);
+		stifli_flex_mcp_log('handleSSE: sessionID=' . $this->sessionID . ' msgUri=' . $msgUri);
 		$this->reply('endpoint', $msgUri, 'text');
 		while (true) {
 			$maxTime = $this->logging ? 60 : 60 * 5;
 			$idle = ( time() - $this->lastAction ) >= $maxTime;
 			if (connection_aborted() || $idle) {
-				easy_visual_mcp_log('handleSSE: connection aborted or idle, aborting session ' . $this->sessionID);
+				stifli_flex_mcp_log('handleSSE: connection aborted or idle, aborting session ' . $this->sessionID);
 				$this->reply('bye');
 				break;
 			}
 			foreach ($this->fetchMessages($this->sessionID) as $p) {
-				if (isset($p['method']) && 'evmcp/kill' === $p['method']) {
+				if (isset($p['method']) && 'SFLMCP/kill' === $p['method']) {
 					$this->reply('bye');
 					exit;
 				}
-				easy_visual_mcp_log('handleSSE: sending message to session ' . $this->sessionID . ' method=' . (isset($p['method']) ? $p['method'] : 'n/a'));
+				stifli_flex_mcp_log('handleSSE: sending message to session ' . $this->sessionID . ' method=' . (isset($p['method']) ? $p['method'] : 'n/a'));
 				$this->reply('message', $p);
 			}
 			usleep(200000);
@@ -286,7 +286,7 @@ class EasyVisualMcp {
 		$method = isset($data['method']) ? $data['method'] : null;
 		$qp = $request->get_param('token') ? 'present' : 'none';
 		$hdr = $request->get_header('Authorization') ? 'present' : 'none';
-		easy_visual_mcp_log(sprintf('handleDirectJsonRPC: id=%s method=%s header=%s query=%s', $id, $method, $hdr, $qp));
+		stifli_flex_mcp_log(sprintf('handleDirectJsonRPC: id=%s method=%s header=%s query=%s', $id, $method, $hdr, $qp));
 		if (json_last_error() !== JSON_ERROR_NONE) {
 			return new WP_REST_Response(array(
 				'jsonrpc' => '2.0',
@@ -305,16 +305,16 @@ class EasyVisualMcp {
 			$reply = null;
 			switch ($method) {
 				case 'initialize':
-					$params = EasyVisualMcpUtils::getArrayValue($data, 'params', array(), 2);
-					$reqVersion = EasyVisualMcpUtils::getArrayValue($params, 'protocolVersion', null);
-					$clientInfo = EasyVisualMcpUtils::getArrayValue($params, 'clientInfo', false);
+					$params = StifliFlexMcpUtils::getArrayValue($data, 'params', array(), 2);
+					$reqVersion = StifliFlexMcpUtils::getArrayValue($params, 'protocolVersion', null);
+					$clientInfo = StifliFlexMcpUtils::getArrayValue($params, 'clientInfo', false);
 					$reply = array(
 						'jsonrpc' => '2.0',
 						'id' => $id,
 						'result' => array(
 							'protocolVersion' => $this->protocolVersion,
 							'serverInfo' => (object) array(
-								'name' => get_bloginfo('name') . ' EasyVisualMCP',
+								'name' => get_bloginfo('name') . ' StifliFlexMcp',
 								'version' => $this->serverVersion,
 							),
 							'capabilities' => array(
@@ -334,7 +334,7 @@ class EasyVisualMcp {
 					);
 					break;
 				   case 'tools/call':
-					   $params = EasyVisualMcpUtils::getArrayValue($data, 'params', array(), 2);
+					   $params = StifliFlexMcpUtils::getArrayValue($data, 'params', array(), 2);
 					   // Compatibilidad: acepta tanto 'name'/'arguments' como 'tool'/'args'
 					   $tool = null;
 					   $arguments = array();
@@ -399,21 +399,21 @@ class EasyVisualMcp {
 		   $hdr = $request->get_header('Authorization') ? 'present' : 'none';
 		   $qp = $request->get_param('token') ? 'present' : 'none';
 		   $remote = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) ) : 'n/a';
-		   easy_visual_mcp_log(sprintf('handleMessage: session=%s remote=%s header=%s query=%s body_len=%d', $sess, $remote, $hdr, $qp, strlen($body)));
-		   easy_visual_mcp_log('handleMessage: RAW BODY: ' . $body);
+		   stifli_flex_mcp_log(sprintf('handleMessage: session=%s remote=%s header=%s query=%s body_len=%d', $sess, $remote, $hdr, $qp, strlen($body)));
+		   stifli_flex_mcp_log('handleMessage: RAW BODY: ' . $body);
 		   $data = json_decode($body, true);
 		   $decodedForLog = wp_json_encode($data);
 		   if (false === $decodedForLog) {
 			   $decodedForLog = '[unserializable]';
 		   }
-		   easy_visual_mcp_log('handleMessage: JSON decoded: ' . $decodedForLog);
+		   stifli_flex_mcp_log('handleMessage: JSON decoded: ' . $decodedForLog);
 		   $id = isset($data['id']) ? $data['id'] : null;
-		   $method = EasyVisualMcpUtils::getArrayValue($data, 'method', null);
+		   $method = StifliFlexMcpUtils::getArrayValue($data, 'method', null);
 		if ('initialized' === $method) {
 			return new WP_REST_Response(null, 204);
 		}
-		if ('evmcp/kill' === $method) {
-			$this->storeMessage($sess, array('jsonrpc' => '2.0', 'method' => 'evmcp/kill'));
+		if ('SFLMCP/kill' === $method) {
+			$this->storeMessage($sess, array('jsonrpc' => '2.0', 'method' => 'SFLMCP/kill'));
 			usleep( 100000 );
 			return new WP_REST_Response(null, 204);
 		}
@@ -428,16 +428,16 @@ class EasyVisualMcp {
 			$reply = null;
 			switch ($method) {
 				case 'initialize':
-					$params = EasyVisualMcpUtils::getArrayValue($data, 'params', array(), 2);
-					$requestedVersion = EasyVisualMcpUtils::getArrayValue($params, 'protocolVersion', null);
-					$clientInfo = EasyVisualMcpUtils::getArrayValue($params, 'clientInfo', null);
+					$params = StifliFlexMcpUtils::getArrayValue($data, 'params', array(), 2);
+					$requestedVersion = StifliFlexMcpUtils::getArrayValue($params, 'protocolVersion', null);
+					$clientInfo = StifliFlexMcpUtils::getArrayValue($params, 'clientInfo', null);
 					$reply = array(
 						'jsonrpc' => '2.0',
 						'id' => $id,
 						'result' => array(
 							'protocolVersion' => $this->protocolVersion,
 							'serverInfo' => (object) array(
-								'name' => get_bloginfo( 'name' ) . ' EasyVisualMCP',
+								'name' => get_bloginfo( 'name' ) . ' StifliFlexMcp',
 								'version' => $this->serverVersion,
 							),
 							'capabilities' => array(
@@ -471,7 +471,7 @@ class EasyVisualMcp {
 					);
 					break;
 				case 'tools/call':
-					   $params = EasyVisualMcpUtils::getArrayValue($data, 'params', array(), 2);
+					   $params = StifliFlexMcpUtils::getArrayValue($data, 'params', array(), 2);
 					   // Compatibilidad: acepta tanto 'name'/'arguments' como 'tool'/'args'
 					   $tool = null;
 					   $arguments = array();
@@ -490,7 +490,7 @@ class EasyVisualMcp {
 						   if (false === $argsLog) {
 							   $argsLog = '[unserializable]';
 						   }
-						   easy_visual_mcp_log(sprintf('tools/call: tool=%s arguments=%s', $toolLog, $argsLog));
+						   stifli_flex_mcp_log(sprintf('tools/call: tool=%s arguments=%s', $toolLog, $argsLog));
 					   $reply = $this->executeTool($tool, $arguments, $id);
 					   break;
 				default:
@@ -509,7 +509,7 @@ class EasyVisualMcp {
 	}
 
 	public function getToolsList() {
-		$model = new EasyVisualMcpModel();
+		$model = new StifliFlexMcpModel();
 		return $model->getToolsList();
 	}
 
@@ -534,8 +534,8 @@ class EasyVisualMcp {
 			   if (false === $idLog) {
 				   $idLog = is_scalar($id) ? (string) $id : '[unserializable]';
 			   }
-			   easy_visual_mcp_log(sprintf('executeTool: tool=%s args=%s id=%s', $toolLog, $argsLog, $idLog));
-			   $filtered = EasyVisualMcpDispatcher::applyFilters('evmcp_callback', null, $tool, $args, $id, $this);
+			   stifli_flex_mcp_log(sprintf('executeTool: tool=%s args=%s id=%s', $toolLog, $argsLog, $idLog));
+			   $filtered = StifliFlexMcpDispatcher::applyFilters('sflmcp_callback', null, $tool, $args, $id, $this);
 			   if (!is_null($filtered)) {
 				   if (is_array($filtered) && isset($filtered['jsonrpc']) && isset($filtered['id'])) {
 					   return $filtered;
@@ -549,7 +549,7 @@ class EasyVisualMcp {
 			   throw new Exception("Unknown tool: {$tool}");
 		   }
 		   catch ( Exception $e ) {
-			   easy_visual_mcp_log('executeTool: Exception: ' . $e->getMessage());
+			   stifli_flex_mcp_log('executeTool: Exception: ' . $e->getMessage());
 			   return $this->rpcError( $id, -44003, $e->getMessage() );
 		   }
 	}
@@ -618,9 +618,9 @@ class EasyVisualMcp {
 			return array();
 		}
 		$now = gmdate('Y-m-d H:i:s');
-		$queue_select = EasyVisualMcpUtils::formatSqlWithTables(
+		$queue_select = StifliFlexMcpUtils::formatSqlWithTables(
 			'SELECT id, payload FROM %s WHERE session_id = %%s AND expires_at >= %%s ORDER BY id ASC',
-			'evmcp_queue'
+			'sflmcp_queue'
 		);
 		$rows = $wpdb->get_results(
 			$wpdb->prepare($queue_select, $sessionKey, $now),
@@ -655,7 +655,7 @@ class EasyVisualMcp {
 		return substr($sess, 0, 191);
 	}
 	private function getModel() {
-		return new EasyVisualMcpModel();
+		return new StifliFlexMcpModel();
 	}
     
 	/**
@@ -665,7 +665,7 @@ class EasyVisualMcp {
 		if (!current_user_can('manage_options')) {
 			wp_send_json_error(array('message' => 'No permission'), 403);
 		}
-		check_ajax_referer('evmcp-admin');
+		check_ajax_referer('SFLMCP-admin');
 		try {
 			if (function_exists('random_bytes')) {
 				$token = bin2hex(random_bytes(16));
@@ -685,7 +685,7 @@ class EasyVisualMcp {
 		if (!current_user_can('manage_options')) {
 			wp_send_json_error(array('message' => 'No permission'), 403);
 		}
-		check_ajax_referer('evmcp_profiles');
+		check_ajax_referer('sflmcp_profiles');
 		
 		global $wpdb;
 		$profile_id = isset($_POST['profile_id']) ? absint( wp_unslash( $_POST['profile_id'] ) ) : 0;
@@ -694,21 +694,21 @@ class EasyVisualMcp {
 			wp_send_json_error(array('message' => 'Invalid profile ID'));
 		}
 		
-		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
-		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
-		$tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
-		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
-		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
-		$tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($tools_table);
-		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
-		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
-		$tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($tools_table);
-		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
-		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
-		$tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($tools_table);
-		$profiles_table_sql = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles');
-		$profile_tools_table_sql = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools');
-		$tools_table_sql = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools');
+		$profiles_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profiles', false);
+		$profile_tools_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profile_tools', false);
+		$tools_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools', false);
+		$profiles_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($tools_table);
+		$profiles_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($tools_table);
+		$profiles_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($tools_table);
+		$profiles_table_sql = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profiles');
+		$profile_tools_table_sql = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profile_tools');
+		$tools_table_sql = StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools');
 		
 		// Get profile tools
 		$profile_tools_query = sprintf(
@@ -753,13 +753,13 @@ class EasyVisualMcp {
 		if (!current_user_can('manage_options')) {
 			wp_send_json_error(array('message' => 'No permission'), 403);
 		}
-		check_ajax_referer('evmcp_profiles');
+		check_ajax_referer('sflmcp_profiles');
 		
 		global $wpdb;
 		$profile_id = isset($_POST['profile_id']) ? absint( wp_unslash( $_POST['profile_id'] ) ) : 0;
 		
-		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
-		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profiles_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profiles', false);
+		$profiles_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profiles_table);
 		
 		// Check if system profile
 		$system_query = sprintf('SELECT is_system FROM %s WHERE id = %%d', $profiles_table_sql);
@@ -782,15 +782,15 @@ class EasyVisualMcp {
 		if (!current_user_can('manage_options')) {
 			wp_send_json_error(array('message' => 'No permission'), 403);
 		}
-		check_ajax_referer('evmcp_profiles');
+		check_ajax_referer('sflmcp_profiles');
 		
 		global $wpdb;
 		$profile_id = isset($_POST['profile_id']) ? absint( wp_unslash( $_POST['profile_id'] ) ) : 0;
 		
-		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
-		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
-		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
-		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$profiles_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profiles', false);
+		$profile_tools_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profile_tools', false);
+		$profiles_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profile_tools_table);
 		
 		// Get original profile
 		$profile_query = sprintf('SELECT * FROM %s WHERE id = %%d', $profiles_table_sql);
@@ -850,17 +850,17 @@ class EasyVisualMcp {
 		if (!current_user_can('manage_options')) {
 			wp_die('No permission', 403);
 		}
-		check_ajax_referer('evmcp_profiles');
+		check_ajax_referer('sflmcp_profiles');
 		
 		global $wpdb;
 		$profile_id = intval($_GET['profile_id'] ?? 0);
 		
-		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
-		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
-		$tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
-		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
-		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
-		$tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($tools_table);
+		$profiles_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profiles', false);
+		$profile_tools_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profile_tools', false);
+		$tools_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools', false);
+		$profiles_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($tools_table);
 		
 		$profile_query = sprintf('SELECT * FROM %s WHERE id = %%d', $profiles_table_sql);
 		$profile = $wpdb->get_row($wpdb->prepare($profile_query, $profile_id), ARRAY_A);
@@ -905,18 +905,18 @@ class EasyVisualMcp {
 		if (!current_user_can('manage_options')) {
 			wp_send_json_error(array('message' => 'No permission'), 403);
 		}
-		check_ajax_referer('evmcp_profiles');
+		check_ajax_referer('sflmcp_profiles');
 		
 		global $wpdb;
-		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
-		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
-		$tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
-		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
-		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
-		$tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($tools_table);
+		$profiles_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profiles', false);
+		$profile_tools_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profile_tools', false);
+		$tools_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools', false);
+		$profiles_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($tools_table);
 
 		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitized via sanitizeJsonString.
-		$json_data = isset($_POST['profile_json']) ? EasyVisualMcpUtils::sanitizeJsonString( wp_unslash( $_POST['profile_json'] ) ) : '';
+		$json_data = isset($_POST['profile_json']) ? StifliFlexMcpUtils::sanitizeJsonString( wp_unslash( $_POST['profile_json'] ) ) : '';
 		if (empty($json_data)) {
 			wp_send_json_error(array('message' => 'No JSON data provided'));
 		}
@@ -1003,13 +1003,13 @@ class EasyVisualMcp {
 		if (!current_user_can('manage_options')) {
 			wp_send_json_error(array('message' => 'No permission'), 403);
 		}
-		check_ajax_referer('evmcp_profiles');
+		check_ajax_referer('sflmcp_profiles');
 		
 		global $wpdb;
-		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
-		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
-		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
-		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$profiles_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profiles', false);
+		$profile_tools_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profile_tools', false);
+		$profiles_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profile_tools_table);
 		
 		// Delete existing system profiles
 		$system_ids_query = sprintf('SELECT id FROM %s WHERE is_system = %%d', $profiles_table_sql);
@@ -1023,7 +1023,7 @@ class EasyVisualMcp {
 		}
 		
 		// Re-seed system profiles
-		easy_visual_mcp_seed_system_profiles();
+		stifli_flex_mcp_seed_system_profiles();
 		
 		wp_send_json_success();
 	}
@@ -1032,7 +1032,7 @@ class EasyVisualMcp {
 		if (!current_user_can('manage_options')) {
 			wp_send_json_error(array('message' => 'No permission'), 403);
 		}
-		check_ajax_referer('evmcp_profiles');
+		check_ajax_referer('sflmcp_profiles');
 		
 		// TODO: Implement create/edit modal in next phase
 		wp_send_json_error(array('message' => 'Not implemented yet'));
@@ -1042,7 +1042,7 @@ class EasyVisualMcp {
 		if (!current_user_can('manage_options')) {
 			wp_send_json_error(array('message' => 'No permission'), 403);
 		}
-		check_ajax_referer('evmcp_profiles');
+		check_ajax_referer('sflmcp_profiles');
 		
 		// TODO: Implement create/edit modal in next phase
 		wp_send_json_error(array('message' => 'Not implemented yet'));
@@ -1053,10 +1053,10 @@ class EasyVisualMcp {
 	 */
 	public function registerAdmin() {
 		add_menu_page(
-			__('Easy Visual MCP', 'easy-visual-mcp'),
-			__('Easy Visual MCP', 'easy-visual-mcp'),
+			__('StifLi Flex MCP', 'stifli-flex-mcp'),
+			__('StifLi Flex MCP', 'stifli-flex-mcp'),
 			'manage_options',
-			'easy-visual-mcp',
+			'stifli-flex-mcp',
 			array($this, 'adminPage'),
 			'dashicons-rest-api',
 			30
@@ -1067,8 +1067,8 @@ class EasyVisualMcp {
 	 * Register settings used by the plugin
 	 */
 	public function registerSettings() {
-		register_setting('easy_visual_mcp', 'easy_visual_mcp_token', array('type' => 'string', 'sanitize_callback' => 'sanitize_text_field'));
-		register_setting('easy_visual_mcp', 'easy_visual_mcp_token_user', array('type' => 'integer', 'sanitize_callback' => 'intval'));
+		register_setting('StifLi_Flex_MCP', 'stifli_flex_mcp_token', array('type' => 'string', 'sanitize_callback' => 'sanitize_text_field'));
+		register_setting('StifLi_Flex_MCP', 'stifli_flex_mcp_token_user', array('type' => 'integer', 'sanitize_callback' => 'intval'));
 	}
 
 	/**
@@ -1076,7 +1076,7 @@ class EasyVisualMcp {
 	 */
 	public function adminPage() {
 		if (!current_user_can('manage_options')) {
-			wp_die( esc_html__('You do not have permission to view this page.','easy-visual-mcp') );
+			wp_die( esc_html__('You do not have permission to view this page.','stifli-flex-mcp') );
 		}
 		
 		// Get active tab
@@ -1084,20 +1084,20 @@ class EasyVisualMcp {
 		
 		?>
 		<div class="wrap">
-			<h1><?php echo esc_html__('Easy Visual MCP', 'easy-visual-mcp'); ?></h1>
+			<h1><?php echo esc_html__('StifLi Flex MCP', 'stifli-flex-mcp'); ?></h1>
 			
 			<h2 class="nav-tab-wrapper">
-				<a href="?page=easy-visual-mcp&tab=settings" class="nav-tab <?php echo $active_tab === 'settings' ? 'nav-tab-active' : ''; ?>">
-					<?php echo esc_html__('Settings', 'easy-visual-mcp'); ?>
+				<a href="?page=stifli-flex-mcp&tab=settings" class="nav-tab <?php echo $active_tab === 'settings' ? 'nav-tab-active' : ''; ?>">
+					<?php echo esc_html__('Settings', 'stifli-flex-mcp'); ?>
 				</a>
-				<a href="?page=easy-visual-mcp&tab=profiles" class="nav-tab <?php echo $active_tab === 'profiles' ? 'nav-tab-active' : ''; ?>">
-					<?php echo esc_html__('Profiles', 'easy-visual-mcp'); ?>
+				<a href="?page=stifli-flex-mcp&tab=profiles" class="nav-tab <?php echo $active_tab === 'profiles' ? 'nav-tab-active' : ''; ?>">
+					<?php echo esc_html__('Profiles', 'stifli-flex-mcp'); ?>
 				</a>
-				<a href="?page=easy-visual-mcp&tab=tools" class="nav-tab <?php echo $active_tab === 'tools' ? 'nav-tab-active' : ''; ?>">
-					<?php echo esc_html__('WordPress Tools', 'easy-visual-mcp'); ?>
+				<a href="?page=stifli-flex-mcp&tab=tools" class="nav-tab <?php echo $active_tab === 'tools' ? 'nav-tab-active' : ''; ?>">
+					<?php echo esc_html__('WordPress Tools', 'stifli-flex-mcp'); ?>
 				</a>
-				<a href="?page=easy-visual-mcp&tab=wc_tools" class="nav-tab <?php echo $active_tab === 'wc_tools' ? 'nav-tab-active' : ''; ?>">
-					<?php echo esc_html__('WooCommerce Tools', 'easy-visual-mcp'); ?>
+				<a href="?page=stifli-flex-mcp&tab=wc_tools" class="nav-tab <?php echo $active_tab === 'wc_tools' ? 'nav-tab-active' : ''; ?>">
+					<?php echo esc_html__('WooCommerce Tools', 'stifli-flex-mcp'); ?>
 				</a>
 			</h2>
 			
@@ -1117,95 +1117,95 @@ class EasyVisualMcp {
 	}
 	
 	private function renderSettingsTab() {
-		$token = get_option('easy_visual_mcp_token', '');
-		$token_user = intval(get_option('easy_visual_mcp_token_user', 0));
+		$token = get_option('stifli_flex_mcp_token', '');
+		$token_user = intval(get_option('stifli_flex_mcp_token_user', 0));
 		$endpoint = rest_url($this->namespace . '/messages');
 		$users = get_users(array('orderby' => 'display_name', 'fields' => array('ID','display_name','user_login')));
 		?>
 		<form method="post" action="options.php">
-			<?php settings_fields('easy_visual_mcp'); ?>
-			<?php do_settings_sections('easy_visual_mcp'); ?>
+			<?php settings_fields('StifLi_Flex_MCP'); ?>
+			<?php do_settings_sections('StifLi_Flex_MCP'); ?>
 			<table class="form-table">
 				<tr valign="top">
-					<th scope="row"><?php echo esc_html__('Token (Bearer)', 'easy-visual-mcp'); ?></th>
+					<th scope="row"><?php echo esc_html__('Token (Bearer)', 'stifli-flex-mcp'); ?></th>
 					<td>
-						<input id="evmcp_token_field" type="text" name="easy_visual_mcp_token" value="<?php echo esc_attr($token); ?>" class="regular-text" />
-						<p class="description"><?php echo esc_html__('Token that will allow authenticated calls to the endpoint. Leave empty to allow public access (not recommended).', 'easy-visual-mcp'); ?></p>
+						<input id="sflmcp_token_field" type="text" name="stifli_flex_mcp_token" value="<?php echo esc_attr($token); ?>" class="regular-text" />
+						<p class="description"><?php echo esc_html__('Token that will allow authenticated calls to the endpoint. Leave empty to allow public access (not recommended).', 'stifli-flex-mcp'); ?></p>
 						<p>
-							<button id="evmcp_generate" class="button button-secondary" type="button"><?php echo esc_html__('Generate Token', 'easy-visual-mcp'); ?></button>
-							<span id="evmcp_spinner" style="display:none;margin-left:10px;"><?php echo esc_html__('Processing...', 'easy-visual-mcp'); ?></span>
+							<button id="sflmcp_generate" class="button button-secondary" type="button"><?php echo esc_html__('Generate Token', 'stifli-flex-mcp'); ?></button>
+							<span id="sflmcp_spinner" style="display:none;margin-left:10px;"><?php echo esc_html__('Processing...', 'stifli-flex-mcp'); ?></span>
 						</p>
 					</td>
 				</tr>
 				<tr valign="top">
-					<th scope="row"><?php echo esc_html__('Assign Token to User', 'easy-visual-mcp'); ?></th>
+					<th scope="row"><?php echo esc_html__('Assign Token to User', 'stifli-flex-mcp'); ?></th>
 					<td>
-						<select name="easy_visual_mcp_token_user">
-							<option value="0"><?php echo esc_html__('-- None (fallback to admin) --', 'easy-visual-mcp'); ?></option>
+						<select name="stifli_flex_mcp_token_user">
+							<option value="0"><?php echo esc_html__('-- None (fallback to admin) --', 'stifli-flex-mcp'); ?></option>
 							<?php foreach ($users as $u): ?>
 								<option value="<?php echo esc_attr(intval($u->ID)); ?>" <?php selected($token_user, intval($u->ID)); ?>><?php echo esc_html($u->display_name . ' (' . $u->user_login . ')'); ?></option>
 							<?php endforeach; ?>
 						</select>
-						<p class="description"><?php echo esc_html__('If you select a user, authenticated calls with the token will be executed with that user\'s permissions.', 'easy-visual-mcp'); ?></p>
+						<p class="description"><?php echo esc_html__('If you select a user, authenticated calls with the token will be executed with that user\'s permissions.', 'stifli-flex-mcp'); ?></p>
 					</td>
 				</tr>
 				<tr valign="top">
-					<th scope="row"><?php echo esc_html__('MCP Endpoint', 'easy-visual-mcp'); ?></th>
+					<th scope="row"><?php echo esc_html__('MCP Endpoint', 'stifli-flex-mcp'); ?></th>
 					<td>
-						<p><strong><?php echo esc_html__('JSON-RPC 2.0 Endpoint:', 'easy-visual-mcp'); ?></strong></p>
-						<code id="evmcp_endpoint" style="display:block;background:#f0f0f0;padding:8px;margin:5px 0;font-size:13px;"><?php echo esc_html($endpoint); ?></code>
-						<p class="description"><?php echo esc_html__('This endpoint accepts JSON-RPC 2.0 calls (methods: tools/list, tools/call). Use this URL in your MCP client or connector.', 'easy-visual-mcp'); ?></p>
+						<p><strong><?php echo esc_html__('JSON-RPC 2.0 Endpoint:', 'stifli-flex-mcp'); ?></strong></p>
+						<code id="sflmcp_endpoint" style="display:block;background:#f0f0f0;padding:8px;margin:5px 0;font-size:13px;"><?php echo esc_html($endpoint); ?></code>
+						<p class="description"><?php echo esc_html__('This endpoint accepts JSON-RPC 2.0 calls (methods: tools/list, tools/call). Use this URL in your MCP client or connector.', 'stifli-flex-mcp'); ?></p>
 					</td>
 				</tr>
 			</table>
 			
-			<h2><?php echo esc_html__('🚀 Quick Start Guide', 'easy-visual-mcp'); ?></h2>
+			<h2><?php echo esc_html__('🚀 Quick Start Guide', 'stifli-flex-mcp'); ?></h2>
 			
-			<h3><?php echo esc_html__('1. Copy Your Endpoint', 'easy-visual-mcp'); ?></h3>
-			<p><?php echo esc_html__('Use one of these ready-to-use URLs:', 'easy-visual-mcp'); ?></p>
+			<h3><?php echo esc_html__('1. Copy Your Endpoint', 'stifli-flex-mcp'); ?></h3>
+			<p><?php echo esc_html__('Use one of these ready-to-use URLs:', 'stifli-flex-mcp'); ?></p>
 			
 			<table class="form-table" style="background:#f9f9f9;border:1px solid #ddd;padding:15px;margin:10px 0;">
 				<tr>
-					<th style="width:200px;padding:10px;"><?php echo esc_html__('Endpoint without token:', 'easy-visual-mcp'); ?></th>
+					<th style="width:200px;padding:10px;"><?php echo esc_html__('Endpoint without token:', 'stifli-flex-mcp'); ?></th>
 					<td style="padding:10px;">
 						<input type="text" value="<?php echo esc_attr($endpoint); ?>" class="large-text code" readonly style="background:#fff;" onclick="this.select();" />
-						<p class="description"><?php echo esc_html__('Use this if you haven\'t generated a token (public access).', 'easy-visual-mcp'); ?></p>
+						<p class="description"><?php echo esc_html__('Use this if you haven\'t generated a token (public access).', 'stifli-flex-mcp'); ?></p>
 					</td>
 				</tr>
 				<tr>
-					<th style="padding:10px;"><?php echo esc_html__('Endpoint with token:', 'easy-visual-mcp'); ?></th>
+					<th style="padding:10px;"><?php echo esc_html__('Endpoint with token:', 'stifli-flex-mcp'); ?></th>
 					<td style="padding:10px;">
-						<input type="text" id="evmcp_url_with_token" class="large-text code" readonly style="background:#fff;" onclick="this.select();" />
-						<button id="evmcp_copy_url" class="button" style="margin-left:5px;"><?php echo esc_html__('📋 Copy', 'easy-visual-mcp'); ?></button>
-						<p class="description"><?php echo esc_html__('Token included in URL (recommended for most clients).', 'easy-visual-mcp'); ?></p>
+						<input type="text" id="sflmcp_url_with_token" class="large-text code" readonly style="background:#fff;" onclick="this.select();" />
+						<button id="sflmcp_copy_url" class="button" style="margin-left:5px;"><?php echo esc_html__('📋 Copy', 'stifli-flex-mcp'); ?></button>
+						<p class="description"><?php echo esc_html__('Token included in URL (recommended for most clients).', 'stifli-flex-mcp'); ?></p>
 					</td>
 				</tr>
 				<tr>
-					<th style="padding:10px;"><?php echo esc_html__('Authorization Header:', 'easy-visual-mcp'); ?></th>
+					<th style="padding:10px;"><?php echo esc_html__('Authorization Header:', 'stifli-flex-mcp'); ?></th>
 					<td style="padding:10px;">
-						<input type="text" id="evmcp_auth_header" class="large-text code" readonly style="background:#fff;" onclick="this.select();" />
-						<button id="evmcp_copy_header" class="button" style="margin-left:5px;"><?php echo esc_html__('📋 Copy', 'easy-visual-mcp'); ?></button>
-						<p class="description"><?php echo esc_html__('Use this header for Bearer authentication (alternative to URL token).', 'easy-visual-mcp'); ?></p>
+						<input type="text" id="sflmcp_auth_header" class="large-text code" readonly style="background:#fff;" onclick="this.select();" />
+						<button id="sflmcp_copy_header" class="button" style="margin-left:5px;"><?php echo esc_html__('📋 Copy', 'stifli-flex-mcp'); ?></button>
+						<p class="description"><?php echo esc_html__('Use this header for Bearer authentication (alternative to URL token).', 'stifli-flex-mcp'); ?></p>
 					</td>
 				</tr>
 			</table>
 			
-			<h3><?php echo esc_html__('2. Test Your Endpoint', 'easy-visual-mcp'); ?></h3>
-			<p><?php echo esc_html__('Verify it works with these commands:', 'easy-visual-mcp'); ?></p>
+			<h3><?php echo esc_html__('2. Test Your Endpoint', 'stifli-flex-mcp'); ?></h3>
+			<p><?php echo esc_html__('Verify it works with these commands:', 'stifli-flex-mcp'); ?></p>
 			
-			<p><strong><?php echo esc_html__('Option A: With Authorization header', 'easy-visual-mcp'); ?></strong></p>
+			<p><strong><?php echo esc_html__('Option A: With Authorization header', 'stifli-flex-mcp'); ?></strong></p>
 			<pre style="background:#2c3e50;color:#ecf0f1;border:none;padding:15px;overflow:auto;border-radius:4px;">curl -X POST '<?php echo esc_url($endpoint); ?>' \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer &lt;YOUR_TOKEN&gt;' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</pre>
 			
-			<p><strong><?php echo esc_html__('Option B: With token in URL', 'easy-visual-mcp'); ?></strong></p>
+			<p><strong><?php echo esc_html__('Option B: With token in URL', 'stifli-flex-mcp'); ?></strong></p>
 			<pre style="background:#2c3e50;color:#ecf0f1;border:none;padding:15px;overflow:auto;border-radius:4px;">curl -X POST '<?php echo esc_url($endpoint); ?>?token=&lt;YOUR_TOKEN&gt;' \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</pre>
 			
-			<h3><?php echo esc_html__('3. Configure in Your Client', 'easy-visual-mcp'); ?></h3>
-			<p><?php echo esc_html__('Example configuration for MCP clients:', 'easy-visual-mcp'); ?></p>
+			<h3><?php echo esc_html__('3. Configure in Your Client', 'stifli-flex-mcp'); ?></h3>
+			<p><?php echo esc_html__('Example configuration for MCP clients:', 'stifli-flex-mcp'); ?></p>
 			<pre style="background:#f7f7f7;border:1px solid #ddd;padding:15px;overflow:auto;border-radius:4px;">{
   "url": "<?php echo esc_url($endpoint); ?>",
   "auth": "Bearer &lt;YOUR_TOKEN&gt;",
@@ -1220,39 +1220,39 @@ class EasyVisualMcp {
 		<script type="text/javascript">
 		(function(){
 			var ajaxUrl = '<?php echo esc_js( admin_url('admin-ajax.php') ); ?>';
-			var nonce = '<?php echo esc_js( wp_create_nonce('evmcp-admin') ); ?>';
+			var nonce = '<?php echo esc_js( wp_create_nonce('SFLMCP-admin') ); ?>';
 			function setFields(token) {
-				var endpoint = document.getElementById('evmcp_endpoint').textContent || '';
-				document.getElementById('evmcp_token_field').value = token || '';
-				document.getElementById('evmcp_url_with_token').value = endpoint + (endpoint.indexOf('?')===-1 ? '?token=' : '&token=') + (token || '');
-				document.getElementById('evmcp_auth_header').value = 'Authorization: Bearer ' + (token || '');
+				var endpoint = document.getElementById('sflmcp_endpoint').textContent || '';
+				document.getElementById('sflmcp_token_field').value = token || '';
+				document.getElementById('sflmcp_url_with_token').value = endpoint + (endpoint.indexOf('?')===-1 ? '?token=' : '&token=') + (token || '');
+				document.getElementById('sflmcp_auth_header').value = 'Authorization: Bearer ' + (token || '');
 			}
 			// init with existing token
 			setFields('<?php echo esc_js($token); ?>');
 
-			document.getElementById('evmcp_generate').addEventListener('click', function(){
-				document.getElementById('evmcp_spinner').style.display = '';
+			document.getElementById('sflmcp_generate').addEventListener('click', function(){
+				document.getElementById('sflmcp_spinner').style.display = '';
 				fetch(ajaxUrl, {
 					method: 'POST',
 					credentials: 'same-origin',
 					headers: {'Content-Type':'application/x-www-form-urlencoded'},
-					body: 'action=evmcp_generate_token&_wpnonce=' + encodeURIComponent(nonce)
+					body: 'action=sflmcp_generate_token&_wpnonce=' + encodeURIComponent(nonce)
 				}).then(function(r){return r.json();}).then(function(j){
-					document.getElementById('evmcp_spinner').style.display = 'none';
+					document.getElementById('sflmcp_spinner').style.display = 'none';
 					if (j.success && j.data && j.data.token) {
 						setFields(j.data.token);
-						alert('<?php echo esc_js(__('Token generated. Save changes to persist it in the option.', 'easy-visual-mcp')); ?>');
+						alert('<?php echo esc_js(__('Token generated. Save changes to persist it in the option.', 'stifli-flex-mcp')); ?>');
 					} else {
-						alert('<?php echo esc_js(__('Error generating token', 'easy-visual-mcp')); ?>: ' + (j.data && j.data.message ? j.data.message : ''));
+						alert('<?php echo esc_js(__('Error generating token', 'stifli-flex-mcp')); ?>: ' + (j.data && j.data.message ? j.data.message : ''));
 					}
-				}).catch(function(e){ document.getElementById('evmcp_spinner').style.display = 'none'; alert('Error: '+e); });
+				}).catch(function(e){ document.getElementById('sflmcp_spinner').style.display = 'none'; alert('Error: '+e); });
 			});
 
-			document.getElementById('evmcp_copy_url').addEventListener('click', function(){
-				navigator.clipboard.writeText(document.getElementById('evmcp_url_with_token').value).then(function(){ alert('URL copied'); });
+			document.getElementById('sflmcp_copy_url').addEventListener('click', function(){
+				navigator.clipboard.writeText(document.getElementById('sflmcp_url_with_token').value).then(function(){ alert('URL copied'); });
 			});
-			document.getElementById('evmcp_copy_header').addEventListener('click', function(){
-				navigator.clipboard.writeText(document.getElementById('evmcp_auth_header').value).then(function(){ alert('Header copied'); });
+			document.getElementById('sflmcp_copy_header').addEventListener('click', function(){
+				navigator.clipboard.writeText(document.getElementById('sflmcp_auth_header').value).then(function(){ alert('Header copied'); });
 			});
 		})();
 		</script>
@@ -1261,32 +1261,32 @@ class EasyVisualMcp {
 	
 	private function renderToolsTab() {
 		global $wpdb;
-		$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
-		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
-		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
-		$table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($table);
-		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
-		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools', false);
+		$profiles_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profiles', false);
+		$profile_tools_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profile_tools', false);
+		$table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($table);
+		$profiles_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profile_tools_table);
 		
 		// Check if there's an active profile
 		$active_profile_query = sprintf('SELECT * FROM %s WHERE is_active = %%d', $profiles_table_sql);
 		$active_profile = $wpdb->get_row($wpdb->prepare($active_profile_query, 1), ARRAY_A);
 		
 		// Handle re-seeding
-		$reseed_nonce = isset($_POST['evmcp_reseed_nonce']) ? sanitize_text_field( wp_unslash( $_POST['evmcp_reseed_nonce'] ) ) : '';
-		if (!empty($reseed_nonce) && wp_verify_nonce($reseed_nonce, 'evmcp_reseed_tools')) {
+		$reseed_nonce = isset($_POST['sflmcp_reseed_nonce']) ? sanitize_text_field( wp_unslash( $_POST['sflmcp_reseed_nonce'] ) ) : '';
+		if (!empty($reseed_nonce) && wp_verify_nonce($reseed_nonce, 'sflmcp_reseed_tools')) {
 			$truncate_query = sprintf('TRUNCATE TABLE %s', $table_sql);
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.NotPrepared -- admin action intentionally resets plugin-managed table.
 			$wpdb->query($truncate_query);
-			easy_visual_mcp_seed_initial_tools();
-			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools reset and reseeded successfully.', 'easy-visual-mcp') . '</p></div>';
+			stifli_flex_mcp_seed_initial_tools();
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools reset and reseeded successfully.', 'stifli-flex-mcp') . '</p></div>';
 		}
 		
 		// Handle tool enable/disable
-		$tools_nonce = isset($_POST['evmcp_tools_nonce']) ? sanitize_text_field( wp_unslash( $_POST['evmcp_tools_nonce'] ) ) : '';
-		if (!empty($tools_nonce) && wp_verify_nonce($tools_nonce, 'evmcp_update_tools')) {
+		$tools_nonce = isset($_POST['sflmcp_tools_nonce']) ? sanitize_text_field( wp_unslash( $_POST['sflmcp_tools_nonce'] ) ) : '';
+		if (!empty($tools_nonce) && wp_verify_nonce($tools_nonce, 'sflmcp_update_tools')) {
 			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- values sanitized via sanitizeCheckboxMap.
-			$tool_enabled = EasyVisualMcpUtils::sanitizeCheckboxMap(
+			$tool_enabled = StifliFlexMcpUtils::sanitizeCheckboxMap(
 				isset($_POST['tool_enabled']) && is_array($_POST['tool_enabled'])
 					? wp_unslash( $_POST['tool_enabled'] )
 					: array()
@@ -1320,9 +1320,9 @@ class EasyVisualMcp {
 							);
 						}
 					}
-					echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools updated and saved to active profile.', 'easy-visual-mcp') . '</p></div>';
+					echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools updated and saved to active profile.', 'stifli-flex-mcp') . '</p></div>';
 				} else {
-					echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools updated successfully.', 'easy-visual-mcp') . '</p></div>';
+					echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools updated successfully.', 'stifli-flex-mcp') . '</p></div>';
 				}
 			}
 		}
@@ -1343,19 +1343,19 @@ class EasyVisualMcp {
 		}
 		
 		?>
-		<p><?php echo esc_html__('Here you can manage which tools are available on the MCP server. Disabled tools will not appear in tools/list.', 'easy-visual-mcp'); ?></p>
-		<p><strong><?php echo esc_html__('Total estimated tokens for enabled WordPress tools:', 'easy-visual-mcp'); ?></strong> <?php echo esc_html(number_format_i18n($enabled_token_total)); ?></p>
-		<p class="description"><?php echo esc_html__('Token estimates are approximate (computed from tool name, description, and schema). Use them to compare profiles rather than as an exact billing value.', 'easy-visual-mcp'); ?></p>
+		<p><?php echo esc_html__('Here you can manage which tools are available on the MCP server. Disabled tools will not appear in tools/list.', 'stifli-flex-mcp'); ?></p>
+		<p><strong><?php echo esc_html__('Total estimated tokens for enabled WordPress tools:', 'stifli-flex-mcp'); ?></strong> <?php echo esc_html(number_format_i18n($enabled_token_total)); ?></p>
+		<p class="description"><?php echo esc_html__('Token estimates are approximate (computed from tool name, description, and schema). Use them to compare profiles rather than as an exact billing value.', 'stifli-flex-mcp'); ?></p>
 		
 		<?php if ($active_profile): ?>
 			<div class="notice notice-info">
 				<p>
-					<strong>⚠️ <?php echo esc_html__('Active profile:', 'easy-visual-mcp'); ?></strong>
+					<strong>⚠️ <?php echo esc_html__('Active profile:', 'stifli-flex-mcp'); ?></strong>
 					<?php echo esc_html($active_profile['profile_name']); ?>
 					<br>
-					<?php echo esc_html__('Changes to tools will be automatically saved to this profile.', 'easy-visual-mcp'); ?>
-					<a href="?page=easy-visual-mcp&tab=profiles" class="button button-small" style="margin-left: 10px;">
-						<?php echo esc_html__('View Profiles', 'easy-visual-mcp'); ?>
+					<?php echo esc_html__('Changes to tools will be automatically saved to this profile.', 'stifli-flex-mcp'); ?>
+					<a href="?page=stifli-flex-mcp&tab=profiles" class="button button-small" style="margin-left: 10px;">
+						<?php echo esc_html__('View Profiles', 'stifli-flex-mcp'); ?>
 					</a>
 				</p>
 			</div>
@@ -1363,36 +1363,36 @@ class EasyVisualMcp {
 		
 		<?php if (empty($grouped_tools)): ?>
 			<div class="notice notice-warning">
-				<p><?php echo esc_html__('No tools found in the database. Use the button below to seed them.', 'easy-visual-mcp'); ?></p>
+				<p><?php echo esc_html__('No tools found in the database. Use the button below to seed them.', 'stifli-flex-mcp'); ?></p>
 			</div>
 			<form method="post" action="">
-				<?php wp_nonce_field('evmcp_reseed_tools', 'evmcp_reseed_nonce'); ?>
+				<?php wp_nonce_field('sflmcp_reseed_tools', 'sflmcp_reseed_nonce'); ?>
 				<p>
-					<button type="submit" class="button button-primary"><?php echo esc_html__('Seed Initial Tools', 'easy-visual-mcp'); ?></button>
+					<button type="submit" class="button button-primary"><?php echo esc_html__('Seed Initial Tools', 'stifli-flex-mcp'); ?></button>
 				</p>
 			</form>
 		<?php else: ?>
 			<form method="post" action="" style="margin-bottom: 20px;">
-				<?php wp_nonce_field('evmcp_reseed_tools', 'evmcp_reseed_nonce'); ?>
+				<?php wp_nonce_field('sflmcp_reseed_tools', 'sflmcp_reseed_nonce'); ?>
 				<p>
-					<button type="submit" class="button button-secondary" onclick="return confirm('<?php echo esc_js(__('This will delete all tools and reseed them. Are you sure?', 'easy-visual-mcp')); ?>');"><?php echo esc_html__('Reset and Reseed Tools', 'easy-visual-mcp'); ?></button>
-					<span class="description"><?php echo esc_html__('Useful if you\'ve updated the plugin and new tools are available.', 'easy-visual-mcp'); ?></span>
+					<button type="submit" class="button button-secondary" onclick="return confirm('<?php echo esc_js(__('This will delete all tools and reseed them. Are you sure?', 'stifli-flex-mcp')); ?>');"><?php echo esc_html__('Reset and Reseed Tools', 'stifli-flex-mcp'); ?></button>
+					<span class="description"><?php echo esc_html__('Useful if you\'ve updated the plugin and new tools are available.', 'stifli-flex-mcp'); ?></span>
 				</p>
 			</form>
 		
 		<form method="post" action="">
-			<?php wp_nonce_field('evmcp_update_tools', 'evmcp_tools_nonce'); ?>
+			<?php wp_nonce_field('sflmcp_update_tools', 'sflmcp_tools_nonce'); ?>
 			
 			<?php foreach ($grouped_tools as $category => $category_tools): ?>
 				<?php $category_token_total = 0; foreach ($category_tools as $tool_meta) { $category_token_total += intval($tool_meta['token_estimate']); } ?>
-				<h2><?php echo esc_html($category); ?> <small style="font-weight: normal;">(<?php echo esc_html__('estimated tokens:', 'easy-visual-mcp'); ?> <?php echo esc_html(number_format_i18n($category_token_total)); ?>)</small></h2>
+				<h2><?php echo esc_html($category); ?> <small style="font-weight: normal;">(<?php echo esc_html__('estimated tokens:', 'stifli-flex-mcp'); ?> <?php echo esc_html(number_format_i18n($category_token_total)); ?>)</small></h2>
 				<table class="wp-list-table widefat fixed striped">
 					<thead>
 						<tr>
-							<th style="width:25%"><?php echo esc_html__('Tool', 'easy-visual-mcp'); ?></th>
-							<th style="width:45%"><?php echo esc_html__('Description', 'easy-visual-mcp'); ?></th>
-							<th style="width:15%"><?php echo esc_html__('Tokens (~)', 'easy-visual-mcp'); ?></th>
-							<th style="width:15%"><?php echo esc_html__('Status', 'easy-visual-mcp'); ?></th>
+							<th style="width:25%"><?php echo esc_html__('Tool', 'stifli-flex-mcp'); ?></th>
+							<th style="width:45%"><?php echo esc_html__('Description', 'stifli-flex-mcp'); ?></th>
+							<th style="width:15%"><?php echo esc_html__('Tokens (~)', 'stifli-flex-mcp'); ?></th>
+							<th style="width:15%"><?php echo esc_html__('Status', 'stifli-flex-mcp'); ?></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1405,7 +1405,7 @@ class EasyVisualMcp {
 									<label>
 										<input type="hidden" name="tool_enabled[<?php echo intval($tool['id']); ?>]" value="0" />
 										<input type="checkbox" name="tool_enabled[<?php echo intval($tool['id']); ?>]" value="1" <?php checked(intval($tool['enabled']), 1); ?> />
-										<?php echo esc_html__('Enabled', 'easy-visual-mcp'); ?>
+										<?php echo esc_html__('Enabled', 'stifli-flex-mcp'); ?>
 									</label>
 								</td>
 							</tr>
@@ -1415,7 +1415,7 @@ class EasyVisualMcp {
 				<br/>
 			<?php endforeach; ?>
 			
-			<?php submit_button(__('Save Changes', 'easy-visual-mcp')); ?>
+			<?php submit_button(__('Save Changes', 'stifli-flex-mcp')); ?>
 		</form>
 		<?php endif; ?>
 		<?php
@@ -1423,32 +1423,32 @@ class EasyVisualMcp {
 	
 	private function renderWCToolsTab() {
 		global $wpdb;
-		$table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
-		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
-		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
-		$table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($table);
-		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
-		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools', false);
+		$profiles_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profiles', false);
+		$profile_tools_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profile_tools', false);
+		$table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($table);
+		$profiles_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profile_tools_table);
 		
 		// Check if there's an active profile
 		$active_profile_query = sprintf('SELECT * FROM %s WHERE is_active = %%d', $profiles_table_sql);
 		$active_profile = $wpdb->get_row($wpdb->prepare($active_profile_query, 1), ARRAY_A);
 		
 		// Handle re-seeding
-		$reseed_nonce = isset($_POST['evmcp_reseed_nonce']) ? sanitize_text_field( wp_unslash( $_POST['evmcp_reseed_nonce'] ) ) : '';
-		if (!empty($reseed_nonce) && wp_verify_nonce($reseed_nonce, 'evmcp_reseed_tools')) {
+		$reseed_nonce = isset($_POST['sflmcp_reseed_nonce']) ? sanitize_text_field( wp_unslash( $_POST['sflmcp_reseed_nonce'] ) ) : '';
+		if (!empty($reseed_nonce) && wp_verify_nonce($reseed_nonce, 'sflmcp_reseed_tools')) {
 			$truncate_query = sprintf('TRUNCATE TABLE %s', $table_sql);
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.NotPrepared -- admin action intentionally resets plugin-managed table.
 			$wpdb->query($truncate_query);
-			easy_visual_mcp_seed_initial_tools();
-			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools reset and reseeded successfully.', 'easy-visual-mcp') . '</p></div>';
+			stifli_flex_mcp_seed_initial_tools();
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools reset and reseeded successfully.', 'stifli-flex-mcp') . '</p></div>';
 		}
 		
 		// Handle tool enable/disable
-		$tools_nonce = isset($_POST['evmcp_tools_nonce']) ? sanitize_text_field( wp_unslash( $_POST['evmcp_tools_nonce'] ) ) : '';
-		if (!empty($tools_nonce) && wp_verify_nonce($tools_nonce, 'evmcp_update_tools')) {
+		$tools_nonce = isset($_POST['sflmcp_tools_nonce']) ? sanitize_text_field( wp_unslash( $_POST['sflmcp_tools_nonce'] ) ) : '';
+		if (!empty($tools_nonce) && wp_verify_nonce($tools_nonce, 'sflmcp_update_tools')) {
 			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- values sanitized via sanitizeCheckboxMap.
-			$tool_enabled = EasyVisualMcpUtils::sanitizeCheckboxMap(
+			$tool_enabled = StifliFlexMcpUtils::sanitizeCheckboxMap(
 				isset($_POST['tool_enabled']) && is_array($_POST['tool_enabled'])
 					? wp_unslash( $_POST['tool_enabled'] )
 					: array()
@@ -1482,9 +1482,9 @@ class EasyVisualMcp {
 							);
 						}
 					}
-					echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools updated and saved to active profile.', 'easy-visual-mcp') . '</p></div>';
+					echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools updated and saved to active profile.', 'stifli-flex-mcp') . '</p></div>';
 				} else {
-					echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools updated successfully.', 'easy-visual-mcp') . '</p></div>';
+					echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Tools updated successfully.', 'stifli-flex-mcp') . '</p></div>';
 				}
 			}
 		}
@@ -1505,19 +1505,19 @@ class EasyVisualMcp {
 		}
 		
 		?>
-		<p><?php echo esc_html__('Here you can manage which WooCommerce tools are available on the MCP server. Disabled tools will not appear in tools/list.', 'easy-visual-mcp'); ?></p>
-		<p><strong><?php echo esc_html__('Total estimated tokens for enabled WooCommerce tools:', 'easy-visual-mcp'); ?></strong> <?php echo esc_html(number_format_i18n($enabled_token_total)); ?></p>
-		<p class="description"><?php echo esc_html__('Token estimates are approximate (computed from tool name, description, and schema). Use them to compare profiles rather than as an exact billing value.', 'easy-visual-mcp'); ?></p>
+		<p><?php echo esc_html__('Here you can manage which WooCommerce tools are available on the MCP server. Disabled tools will not appear in tools/list.', 'stifli-flex-mcp'); ?></p>
+		<p><strong><?php echo esc_html__('Total estimated tokens for enabled WooCommerce tools:', 'stifli-flex-mcp'); ?></strong> <?php echo esc_html(number_format_i18n($enabled_token_total)); ?></p>
+		<p class="description"><?php echo esc_html__('Token estimates are approximate (computed from tool name, description, and schema). Use them to compare profiles rather than as an exact billing value.', 'stifli-flex-mcp'); ?></p>
 		
 		<?php if ($active_profile): ?>
 			<div class="notice notice-info">
 				<p>
-					<strong>⚠️ <?php echo esc_html__('Active profile:', 'easy-visual-mcp'); ?></strong>
+					<strong>⚠️ <?php echo esc_html__('Active profile:', 'stifli-flex-mcp'); ?></strong>
 					<?php echo esc_html($active_profile['profile_name']); ?>
 					<br>
-					<?php echo esc_html__('Changes to tools will be automatically saved to this profile.', 'easy-visual-mcp'); ?>
-					<a href="?page=easy-visual-mcp&tab=profiles" class="button button-small" style="margin-left: 10px;">
-						<?php echo esc_html__('View Profiles', 'easy-visual-mcp'); ?>
+					<?php echo esc_html__('Changes to tools will be automatically saved to this profile.', 'stifli-flex-mcp'); ?>
+					<a href="?page=stifli-flex-mcp&tab=profiles" class="button button-small" style="margin-left: 10px;">
+						<?php echo esc_html__('View Profiles', 'stifli-flex-mcp'); ?>
 					</a>
 				</p>
 		</div>
@@ -1531,31 +1531,31 @@ class EasyVisualMcp {
 	<?php if (!$wc_installed): ?>
 		<div class="notice notice-warning">
 			<p>
-				<strong>⚠️ <?php echo esc_html__('WooCommerce is not installed or activated', 'easy-visual-mcp'); ?></strong><br>
-				<?php echo esc_html__('WooCommerce tools are available to configure, but will not work until you install and activate the WooCommerce plugin.', 'easy-visual-mcp'); ?>
-				<?php echo esc_html__('You can enable/disable them now and they will be ready when WooCommerce is active.', 'easy-visual-mcp'); ?>
+				<strong>⚠️ <?php echo esc_html__('WooCommerce is not installed or activated', 'stifli-flex-mcp'); ?></strong><br>
+				<?php echo esc_html__('WooCommerce tools are available to configure, but will not work until you install and activate the WooCommerce plugin.', 'stifli-flex-mcp'); ?>
+				<?php echo esc_html__('You can enable/disable them now and they will be ready when WooCommerce is active.', 'stifli-flex-mcp'); ?>
 			</p>
 		</div>
 	<?php endif; ?>
 	
 	<?php if (empty($grouped_tools)): ?>
 		<div class="notice notice-info">
-			<p><?php echo esc_html__('No WooCommerce tools found in the database. Use the "Reset and Reseed" button in the WordPress tab to load them.', 'easy-visual-mcp'); ?></p>
+			<p><?php echo esc_html__('No WooCommerce tools found in the database. Use the "Reset and Reseed" button in the WordPress tab to load them.', 'stifli-flex-mcp'); ?></p>
 		</div>
 	<?php else: ?>
 		<form method="post" action="">
-			<?php wp_nonce_field('evmcp_update_tools', 'evmcp_tools_nonce'); ?>
+			<?php wp_nonce_field('sflmcp_update_tools', 'sflmcp_tools_nonce'); ?>
 			
 			<?php foreach ($grouped_tools as $category => $category_tools): ?>
 				<?php $category_token_total = 0; foreach ($category_tools as $tool_meta) { $category_token_total += intval($tool_meta['token_estimate']); } ?>
-				<h2><?php echo esc_html($category); ?> <small style="font-weight: normal;">(<?php echo esc_html__('estimated tokens:', 'easy-visual-mcp'); ?> <?php echo esc_html(number_format_i18n($category_token_total)); ?>)</small></h2>
+				<h2><?php echo esc_html($category); ?> <small style="font-weight: normal;">(<?php echo esc_html__('estimated tokens:', 'stifli-flex-mcp'); ?> <?php echo esc_html(number_format_i18n($category_token_total)); ?>)</small></h2>
 				<table class="wp-list-table widefat fixed striped">
 					<thead>
 						<tr>
-							<th style="width:25%"><?php echo esc_html__('Tool', 'easy-visual-mcp'); ?></th>
-							<th style="width:45%"><?php echo esc_html__('Description', 'easy-visual-mcp'); ?></th>
-							<th style="width:15%"><?php echo esc_html__('Tokens (~)', 'easy-visual-mcp'); ?></th>
-							<th style="width:15%"><?php echo esc_html__('Status', 'easy-visual-mcp'); ?></th>
+							<th style="width:25%"><?php echo esc_html__('Tool', 'stifli-flex-mcp'); ?></th>
+							<th style="width:45%"><?php echo esc_html__('Description', 'stifli-flex-mcp'); ?></th>
+							<th style="width:15%"><?php echo esc_html__('Tokens (~)', 'stifli-flex-mcp'); ?></th>
+							<th style="width:15%"><?php echo esc_html__('Status', 'stifli-flex-mcp'); ?></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -1568,7 +1568,7 @@ class EasyVisualMcp {
 									<label>
 										<input type="hidden" name="tool_enabled[<?php echo intval($tool['id']); ?>]" value="0" />
 										<input type="checkbox" name="tool_enabled[<?php echo intval($tool['id']); ?>]" value="1" <?php checked(intval($tool['enabled']), 1); ?> />
-										<?php echo esc_html__('Enabled', 'easy-visual-mcp'); ?>
+										<?php echo esc_html__('Enabled', 'stifli-flex-mcp'); ?>
 									</label>
 								</td>
 							</tr>
@@ -1578,7 +1578,7 @@ class EasyVisualMcp {
 				<br/>
 			<?php endforeach; ?>
 			
-			<?php submit_button(__('Save Changes', 'easy-visual-mcp')); ?>
+			<?php submit_button(__('Save Changes', 'stifli-flex-mcp')); ?>
 		</form>
 		<?php endif; ?>
 		<?php
@@ -1586,12 +1586,12 @@ class EasyVisualMcp {
 	
 	private function renderProfilesTab() {
 		global $wpdb;
-		$profiles_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profiles', false);
-		$profile_tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_profile_tools', false);
-		$tools_table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
-		$profiles_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profiles_table);
-		$profile_tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($profile_tools_table);
-		$tools_table_sql = EasyVisualMcpUtils::wrapTableNameForQuery($tools_table);
+		$profiles_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profiles', false);
+		$profile_tools_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_profile_tools', false);
+		$tools_table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools', false);
+		$profiles_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profiles_table);
+		$profile_tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($profile_tools_table);
+		$tools_table_sql = StifliFlexMcpUtils::wrapTableNameForQuery($tools_table);
 		
 		// Get all profiles with tool count and estimated tokens
 		$profiles_query = sprintf(
@@ -1612,15 +1612,15 @@ class EasyVisualMcp {
 		$total_tools = $wpdb->get_var($wpdb->prepare($total_tools_query, 1));
 		
 		?>
-		<p><?php echo esc_html__('Profiles allow you to quickly switch which tools are available for different use cases.', 'easy-visual-mcp'); ?></p>
-		<p class="description"><?php echo esc_html__('Token totals shown below are approximations based on the enabled tools. They help you gauge relative cost when switching profiles.', 'easy-visual-mcp'); ?></p>
+		<p><?php echo esc_html__('Profiles allow you to quickly switch which tools are available for different use cases.', 'stifli-flex-mcp'); ?></p>
+		<p class="description"><?php echo esc_html__('Token totals shown below are approximations based on the enabled tools. They help you gauge relative cost when switching profiles.', 'stifli-flex-mcp'); ?></p>
 		
 		<div style="margin: 20px 0;">
-			<button type="button" class="button" id="evmcp_import_profile">
-				<?php echo esc_html__('⬆ Import JSON', 'easy-visual-mcp'); ?>
+			<button type="button" class="button" id="sflmcp_import_profile">
+				<?php echo esc_html__('⬆ Import JSON', 'stifli-flex-mcp'); ?>
 			</button>
-			<button type="button" class="button" id="evmcp_restore_system_profiles">
-				<?php echo esc_html__('🔄 Restore System Profiles', 'easy-visual-mcp'); ?>
+			<button type="button" class="button" id="sflmcp_restore_system_profiles">
+				<?php echo esc_html__('🔄 Restore System Profiles', 'stifli-flex-mcp'); ?>
 			</button>
 		</div>
 		<?php
@@ -1635,16 +1635,16 @@ class EasyVisualMcp {
 		?>
 		<div class="notice notice-info">
 			<p>
-				<strong><?php echo esc_html__('Currently active profile:', 'easy-visual-mcp'); ?></strong>
+				<strong><?php echo esc_html__('Currently active profile:', 'stifli-flex-mcp'); ?></strong>
 				<?php echo esc_html($active_profile_info['profile_name']); ?>
-				<span style="display:block;font-size:12px;"><?php echo esc_html__('Estimated token footprint (sum of enabled tools within the profile):', 'easy-visual-mcp'); ?> <?php echo esc_html(number_format_i18n(intval($active_profile_info['tokens_sum']))); ?></span>
+				<span style="display:block;font-size:12px;"><?php echo esc_html__('Estimated token footprint (sum of enabled tools within the profile):', 'stifli-flex-mcp'); ?> <?php echo esc_html(number_format_i18n(intval($active_profile_info['tokens_sum']))); ?></span>
 			</p>
 		</div>
 		<?php endif; ?>
 		
 		<?php if (empty($profiles)): ?>
 			<div class="notice notice-warning">
-				<p><?php echo esc_html__('No profiles found. Use the button above to restore system profiles.', 'easy-visual-mcp'); ?></p>
+				<p><?php echo esc_html__('No profiles found. Use the button above to restore system profiles.', 'stifli-flex-mcp'); ?></p>
 			</div>
 		<?php else: ?>
 			<!-- System Profiles -->
@@ -1652,16 +1652,16 @@ class EasyVisualMcp {
 			$system_profiles = array_filter($profiles, function($p) { return intval($p['is_system']) === 1; });
 			if (!empty($system_profiles)):
 			?>
-			<h3><?php echo esc_html__('System Profiles (non-deletable)', 'easy-visual-mcp'); ?></h3>
+			<h3><?php echo esc_html__('System Profiles (non-deletable)', 'stifli-flex-mcp'); ?></h3>
 			<table class="wp-list-table widefat fixed striped">
 				<thead>
 					<tr>
 						<th style="width: 5%;"></th>
-						<th style="width: 18%;"><?php echo esc_html__('Name', 'easy-visual-mcp'); ?></th>
-						<th style="width: 35%;"><?php echo esc_html__('Description', 'easy-visual-mcp'); ?></th>
-						<th style="width: 12%;"><?php echo esc_html__('Tools', 'easy-visual-mcp'); ?></th>
-						<th style="width: 12%;"><?php echo esc_html__('Tokens (~)', 'easy-visual-mcp'); ?></th>
-						<th style="width: 18%;"><?php echo esc_html__('Actions', 'easy-visual-mcp'); ?></th>
+						<th style="width: 18%;"><?php echo esc_html__('Name', 'stifli-flex-mcp'); ?></th>
+						<th style="width: 35%;"><?php echo esc_html__('Description', 'stifli-flex-mcp'); ?></th>
+						<th style="width: 12%;"><?php echo esc_html__('Tools', 'stifli-flex-mcp'); ?></th>
+						<th style="width: 12%;"><?php echo esc_html__('Tokens (~)', 'stifli-flex-mcp'); ?></th>
+						<th style="width: 18%;"><?php echo esc_html__('Actions', 'stifli-flex-mcp'); ?></th>
 					</tr>
 				</thead>
 				<tbody>
@@ -1680,7 +1680,7 @@ class EasyVisualMcp {
 								$profile_tools_list[] = $tool_row['tool_name'];
 							}
 						}
-						$tools_list_html = !empty($profile_tools_list) ? implode(', ', $profile_tools_list) : esc_html__('None', 'easy-visual-mcp');
+						$tools_list_html = !empty($profile_tools_list) ? implode(', ', $profile_tools_list) : esc_html__('None', 'stifli-flex-mcp');
 						?>
 						<tr>
 							<td>
@@ -1692,21 +1692,21 @@ class EasyVisualMcp {
 							<td>
 								<?php echo esc_html($profile['profile_description']); ?>
 								<br>
-								<a href="#" class="evmcp-view-tools" data-tools="<?php echo esc_attr($tools_list_html); ?>" style="font-size: 12px; text-decoration: none;">
-									📋 <?php echo esc_html__('View tools', 'easy-visual-mcp'); ?>
+								<a href="#" class="SFLMCP-view-tools" data-tools="<?php echo esc_attr($tools_list_html); ?>" style="font-size: 12px; text-decoration: none;">
+									📋 <?php echo esc_html__('View tools', 'stifli-flex-mcp'); ?>
 								</a>
 							</td>
 							<td><?php echo esc_html(intval($profile['tools_count']) . '/' . intval($total_tools)); ?></td>
 							<td><?php echo esc_html(number_format_i18n(intval($profile['tokens_sum']))); ?></td>
 							<td>
-								<button type="button" class="button evmcp-apply-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
-									<?php echo esc_html__('Apply', 'easy-visual-mcp'); ?>
+								<button type="button" class="button SFLMCP-apply-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
+									<?php echo esc_html__('Apply', 'stifli-flex-mcp'); ?>
 								</button>
-								<button type="button" class="button evmcp-duplicate-profile" data-profile-id="<?php echo intval($profile['id']); ?>">
-									<?php echo esc_html__('Duplicate', 'easy-visual-mcp'); ?>
+								<button type="button" class="button SFLMCP-duplicate-profile" data-profile-id="<?php echo intval($profile['id']); ?>">
+									<?php echo esc_html__('Duplicate', 'stifli-flex-mcp'); ?>
 								</button>
-								<button type="button" class="button evmcp-export-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
-									<?php echo esc_html__('Export', 'easy-visual-mcp'); ?>
+								<button type="button" class="button SFLMCP-export-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
+									<?php echo esc_html__('Export', 'stifli-flex-mcp'); ?>
 								</button>
 							</td>
 						</tr>
@@ -1720,16 +1720,16 @@ class EasyVisualMcp {
 			$custom_profiles = array_filter($profiles, function($p) { return intval($p['is_system']) === 0; });
 			if (!empty($custom_profiles)):
 			?>
-			<h3 style="margin-top: 30px;"><?php echo esc_html__('Custom Profiles', 'easy-visual-mcp'); ?></h3>
+			<h3 style="margin-top: 30px;"><?php echo esc_html__('Custom Profiles', 'stifli-flex-mcp'); ?></h3>
 			<table class="wp-list-table widefat fixed striped">
 				<thead>
 					<tr>
 						<th style="width: 5%;"></th>
-						<th style="width: 18%;"><?php echo esc_html__('Name', 'easy-visual-mcp'); ?></th>
-						<th style="width: 35%;"><?php echo esc_html__('Description', 'easy-visual-mcp'); ?></th>
-						<th style="width: 12%;"><?php echo esc_html__('Tools', 'easy-visual-mcp'); ?></th>
-						<th style="width: 12%;"><?php echo esc_html__('Tokens (~)', 'easy-visual-mcp'); ?></th>
-						<th style="width: 18%;"><?php echo esc_html__('Actions', 'easy-visual-mcp'); ?></th>
+						<th style="width: 18%;"><?php echo esc_html__('Name', 'stifli-flex-mcp'); ?></th>
+						<th style="width: 35%;"><?php echo esc_html__('Description', 'stifli-flex-mcp'); ?></th>
+						<th style="width: 12%;"><?php echo esc_html__('Tools', 'stifli-flex-mcp'); ?></th>
+						<th style="width: 12%;"><?php echo esc_html__('Tokens (~)', 'stifli-flex-mcp'); ?></th>
+						<th style="width: 18%;"><?php echo esc_html__('Actions', 'stifli-flex-mcp'); ?></th>
 					</tr>
 				</thead>
 				<tbody>
@@ -1749,7 +1749,7 @@ class EasyVisualMcp {
 								$profile_tools_list[] = sprintf('%s (≈%s)', $tool_row['tool_name'], $token_str);
 							}
 						}
-						$tools_list_html = !empty($profile_tools_list) ? implode(', ', $profile_tools_list) : esc_html__('None', 'easy-visual-mcp');
+						$tools_list_html = !empty($profile_tools_list) ? implode(', ', $profile_tools_list) : esc_html__('None', 'stifli-flex-mcp');
 						?>
 						<tr>
 							<td>
@@ -1761,27 +1761,27 @@ class EasyVisualMcp {
 							<td>
 								<?php echo esc_html($profile['profile_description']); ?>
 								<br>
-								<a href="#" class="evmcp-view-tools" data-tools="<?php echo esc_attr($tools_list_html); ?>" style="font-size: 12px; text-decoration: none;">
-									📋 <?php echo esc_html__('View tools', 'easy-visual-mcp'); ?>
+								<a href="#" class="SFLMCP-view-tools" data-tools="<?php echo esc_attr($tools_list_html); ?>" style="font-size: 12px; text-decoration: none;">
+									📋 <?php echo esc_html__('View tools', 'stifli-flex-mcp'); ?>
 								</a>
 							</td>
 							<td><?php echo esc_html(intval($profile['tools_count']) . '/' . intval($total_tools)); ?></td>
 							<td><?php echo esc_html(number_format_i18n(intval($profile['tokens_sum']))); ?></td>
 							<td>
-								<button type="button" class="button evmcp-apply-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
-									<?php echo esc_html__('Apply', 'easy-visual-mcp'); ?>
+								<button type="button" class="button SFLMCP-apply-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
+									<?php echo esc_html__('Apply', 'stifli-flex-mcp'); ?>
 								</button>
-								<button type="button" class="button evmcp-edit-profile" data-profile-id="<?php echo intval($profile['id']); ?>">
-									<?php echo esc_html__('Edit', 'easy-visual-mcp'); ?>
+								<button type="button" class="button SFLMCP-edit-profile" data-profile-id="<?php echo intval($profile['id']); ?>">
+									<?php echo esc_html__('Edit', 'stifli-flex-mcp'); ?>
 								</button>
-								<button type="button" class="button evmcp-duplicate-profile" data-profile-id="<?php echo intval($profile['id']); ?>">
-									<?php echo esc_html__('Duplicate', 'easy-visual-mcp'); ?>
+								<button type="button" class="button SFLMCP-duplicate-profile" data-profile-id="<?php echo intval($profile['id']); ?>">
+									<?php echo esc_html__('Duplicate', 'stifli-flex-mcp'); ?>
 								</button>
-								<button type="button" class="button evmcp-export-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
-									<?php echo esc_html__('Export', 'easy-visual-mcp'); ?>
+								<button type="button" class="button SFLMCP-export-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
+									<?php echo esc_html__('Export', 'stifli-flex-mcp'); ?>
 								</button>
-								<button type="button" class="button button-link-delete evmcp-delete-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
-									<?php echo esc_html__('Delete', 'easy-visual-mcp'); ?>
+								<button type="button" class="button button-link-delete SFLMCP-delete-profile" data-profile-id="<?php echo intval($profile['id']); ?>" data-profile-name="<?php echo esc_attr($profile['profile_name']); ?>">
+									<?php echo esc_html__('Delete', 'stifli-flex-mcp'); ?>
 								</button>
 							</td>
 						</tr>
@@ -1792,14 +1792,14 @@ class EasyVisualMcp {
 		<?php endif; ?>
 		
 		<!-- Hidden file input for import -->
-		<input type="file" id="evmcp_import_file" accept=".json" style="display: none;" />
+		<input type="file" id="sflmcp_import_file" accept=".json" style="display: none;" />
 		
 		<script>
 		(function(){
 			// Helper for AJAX calls
-			function evmcpAjax(action, data, successMsg) {
+			function SFLMCPAjax(action, data, successMsg) {
 				data.action = action;
-				data._wpnonce = '<?php echo esc_js( wp_create_nonce('evmcp_profiles') ); ?>';
+				data._wpnonce = '<?php echo esc_js( wp_create_nonce('sflmcp_profiles') ); ?>';
 				
 				return fetch(ajaxurl, {
 					method: 'POST',
@@ -1816,50 +1816,50 @@ class EasyVisualMcp {
 			}
 			
 			// Apply profile
-			document.querySelectorAll('.evmcp-apply-profile').forEach(btn => {
+			document.querySelectorAll('.SFLMCP-apply-profile').forEach(btn => {
 				btn.addEventListener('click', function() {
 					if (!confirm('Apply profile "' + this.dataset.profileName + '"?\n\nThis will change the enabled tools.')) return;
-					evmcpAjax('evmcp_apply_profile', {profile_id: this.dataset.profileId}, 'Profile applied successfully');
+					SFLMCPAjax('sflmcp_apply_profile', {profile_id: this.dataset.profileId}, 'Profile applied successfully');
 				});
 			});
 			
 			// Delete profile
-			document.querySelectorAll('.evmcp-delete-profile').forEach(btn => {
+			document.querySelectorAll('.SFLMCP-delete-profile').forEach(btn => {
 				btn.addEventListener('click', function() {
 					if (!confirm('Delete profile "' + this.dataset.profileName + '"?\n\nThis action cannot be undone.')) return;
-					evmcpAjax('evmcp_delete_profile', {profile_id: this.dataset.profileId}, 'Profile deleted successfully');
+					SFLMCPAjax('sflmcp_delete_profile', {profile_id: this.dataset.profileId}, 'Profile deleted successfully');
 				});
 			});
 			
 			// Duplicate profile
-			document.querySelectorAll('.evmcp-duplicate-profile').forEach(btn => {
+			document.querySelectorAll('.SFLMCP-duplicate-profile').forEach(btn => {
 				btn.addEventListener('click', function() {
-					evmcpAjax('evmcp_duplicate_profile', {profile_id: this.dataset.profileId}, 'Profile duplicated successfully');
+					SFLMCPAjax('sflmcp_duplicate_profile', {profile_id: this.dataset.profileId}, 'Profile duplicated successfully');
 				});
 			});
 			
 			// Export profile
-			document.querySelectorAll('.evmcp-export-profile').forEach(btn => {
+			document.querySelectorAll('.SFLMCP-export-profile').forEach(btn => {
 				btn.addEventListener('click', function() {
 					const profileId = this.dataset.profileId;
 					const profileName = this.dataset.profileName;
-					window.location.href = ajaxurl + '?action=evmcp_export_profile&profile_id=' + profileId + '&_wpnonce=<?php echo esc_js( wp_create_nonce('evmcp_profiles') ); ?>';
+					window.location.href = ajaxurl + '?action=sflmcp_export_profile&profile_id=' + profileId + '&_wpnonce=<?php echo esc_js( wp_create_nonce('sflmcp_profiles') ); ?>';
 				});
 			});
 			
 			// Import profile
-			document.getElementById('evmcp_import_profile').addEventListener('click', function() {
-				document.getElementById('evmcp_import_file').click();
+			document.getElementById('sflmcp_import_profile').addEventListener('click', function() {
+				document.getElementById('sflmcp_import_file').click();
 			});
 			
-			document.getElementById('evmcp_import_file').addEventListener('change', function() {
+			document.getElementById('sflmcp_import_file').addEventListener('change', function() {
 				if (!this.files.length) return;
 				const file = this.files[0];
 				const reader = new FileReader();
 				reader.onload = function(e) {
 					try {
 						const json = JSON.parse(e.target.result);
-						evmcpAjax('evmcp_import_profile', {profile_json: JSON.stringify(json)}, 'Profile imported successfully');
+						SFLMCPAjax('sflmcp_import_profile', {profile_json: JSON.stringify(json)}, 'Profile imported successfully');
 					} catch (err) {
 						alert('Error reading JSON file: ' + err.message);
 					}
@@ -1868,13 +1868,13 @@ class EasyVisualMcp {
 			});
 			
 			// Restore system profiles
-			document.getElementById('evmcp_restore_system_profiles').addEventListener('click', function() {
+			document.getElementById('sflmcp_restore_system_profiles').addEventListener('click', function() {
 				if (!confirm('Restore system profiles?\n\nThis will recreate the 8 predefined profiles.')) return;
-				evmcpAjax('evmcp_restore_system_profiles', {}, 'System profiles restored');
+				SFLMCPAjax('sflmcp_restore_system_profiles', {}, 'System profiles restored');
 			});
 			
 			// Edit profile (TODO: implement modal)
-			document.querySelectorAll('.evmcp-edit-profile').forEach(btn => {
+			document.querySelectorAll('.SFLMCP-edit-profile').forEach(btn => {
 				btn.addEventListener('click', function() {
 					alert('Profile creation/editing functionality with modal will be implemented in the next phase');
 				});
@@ -1882,7 +1882,7 @@ class EasyVisualMcp {
 			
 			// View tools tooltip
 			var tooltip = null;
-			document.querySelectorAll('.evmcp-view-tools').forEach(link => {
+			document.querySelectorAll('.SFLMCP-view-tools').forEach(link => {
 				link.addEventListener('mouseenter', function(e) {
 					e.preventDefault();
 					// Remove existing tooltip
@@ -1891,7 +1891,7 @@ class EasyVisualMcp {
 					// Create tooltip
 					tooltip = document.createElement('div');
 					tooltip.style.cssText = 'position: absolute; background: #fff; border: 1px solid #ccc; padding: 10px; max-width: 400px; max-height: 300px; overflow-y: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 9999; font-size: 12px; line-height: 1.5;';
-					tooltip.innerHTML = '<strong><?php echo esc_js(__('Included tools:', 'easy-visual-mcp')); ?></strong><br>' + this.dataset.tools;
+					tooltip.innerHTML = '<strong><?php echo esc_js(__('Included tools:', 'stifli-flex-mcp')); ?></strong><br>' + this.dataset.tools;
 					document.body.appendChild(tooltip);
 					
 					// Position tooltip near mouse

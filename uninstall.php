@@ -2,7 +2,7 @@
 /**
  * Fired when the plugin is uninstalled.
  *
- * @package Easy_Visual_MCP
+ * @package StifLi_Flex_MCP
  */
 
 // If uninstall not called from WordPress, exit.
@@ -28,24 +28,24 @@ $drop_tables = static function (array $tables, $wpdb, $wrap_table) {
 };
 
 // Drop all plugin tables
-$drop_tables(array('evmcp_queue', 'evmcp_tools', 'evmcp_profile_tools', 'evmcp_profiles'), $wpdb, $wrap_table);
+$drop_tables(array('sflmcp_queue', 'sflmcp_tools', 'sflmcp_profile_tools', 'sflmcp_profiles'), $wpdb, $wrap_table);
 
 // Delete all plugin options
-delete_option('easy_visual_mcp_token');
-delete_option('easy_visual_mcp_token_user');
+delete_option('stifli_flex_mcp_token');
+delete_option('stifli_flex_mcp_token_user');
 
 // For multisite installations
 if (is_multisite()) {
-	$easy_visual_mcp_sites = get_sites(['number' => 0]);
-	foreach ($easy_visual_mcp_sites as $easy_visual_mcp_site) {
-		switch_to_blog($easy_visual_mcp_site->blog_id);
+	$stifli_flex_mcp_sites = get_sites(['number' => 0]);
+	foreach ($stifli_flex_mcp_sites as $stifli_flex_mcp_site) {
+		switch_to_blog($stifli_flex_mcp_site->blog_id);
 		
 		// Drop tables for each site
-		$drop_tables(array('evmcp_queue', 'evmcp_tools', 'evmcp_profile_tools', 'evmcp_profiles'), $wpdb, $wrap_table);
+		$drop_tables(array('sflmcp_queue', 'sflmcp_tools', 'sflmcp_profile_tools', 'sflmcp_profiles'), $wpdb, $wrap_table);
 		
 		// Delete options for each site
-		delete_option('easy_visual_mcp_token');
-		delete_option('easy_visual_mcp_token_user');
+		delete_option('stifli_flex_mcp_token');
+		delete_option('stifli_flex_mcp_token_user');
 		
 		restore_current_blog();
 	}

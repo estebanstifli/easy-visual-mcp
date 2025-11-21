@@ -1,6 +1,6 @@
 <?php
-// Frame mínimo para EasyVisualMcp (stub)
-class EasyVisualMcpFrame {
+// Frame mínimo para StifliFlexMcp (stub)
+class StifliFlexMcpFrame {
 	public static function _() {
 		return new self();
 	}

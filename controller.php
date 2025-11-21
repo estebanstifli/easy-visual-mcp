@@ -2,6 +2,6 @@
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
-class EasyVisualMcpController {
+class StifliFlexMcpController {
 	// Puedes extender de una clase base si lo necesitas
 }

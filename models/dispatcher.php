@@ -1,6 +1,6 @@
 <?php
-// Dispatcher mínimo para EasyVisualMcp (stub)
-class EasyVisualMcpDispatcher {
+// Dispatcher mínimo para StifliFlexMcp (stub)
+class StifliFlexMcpDispatcher {
 	public static function addFilter($tag, $function_to_add, $priority = 10, $accepted_args = 1) {
 		add_filter($tag, $function_to_add, $priority, $accepted_args);
 	}

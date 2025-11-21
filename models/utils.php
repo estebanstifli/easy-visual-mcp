@@ -1,6 +1,6 @@
 <?php
-// Utilidades mínimas para EasyVisualMcp (stub)
-class EasyVisualMcpUtils {
+// Utilidades mínimas para StifliFlexMcp (stub)
+class StifliFlexMcpUtils {
 	public static function getUserAgent() {
 		return isset($_SERVER['HTTP_USER_AGENT']) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
 	}

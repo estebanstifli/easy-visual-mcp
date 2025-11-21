@@ -1,6 +1,6 @@
 FILE: models/model.php
 Line	Column	Type	Code	Message	Edit Link
-111	64	ERROR	WordPress.DB.PreparedSQL.NotPrepared	Use placeholders and $wpdb->prepare(); found EasyVisualMcpUtils	View in code editor (opens in a new tab)
+111	64	ERROR	WordPress.DB.PreparedSQL.NotPrepared	Use placeholders and $wpdb->prepare(); found StifliFlexMcpUtils	View in code editor (opens in a new tab)
 111	84	ERROR	WordPress.DB.PreparedSQL.NotPrepared	Use placeholders and $wpdb->prepare(); found getPrefixedTable	View in code editor (opens in a new tab)
 
 FILE: mod.php
@@ -68,7 +68,7 @@ Line	Column	Type	Code	Message	Edit Link
 109	24	WARNING	WordPress.DB.DirectDatabaseQuery.DirectQuery	Use of a direct database call is discouraged.	View in code editor (opens in a new tab)
 109	24	WARNING	WordPress.DB.DirectDatabaseQuery.NoCaching	Direct database call without caching detected. Consider using wp_cache_get() / wp_cache_set() or wp_cache_delete().	View in code editor (opens in a new tab)
 
-FILE: easy-visual-mcp.php
+FILE: stifli-flex-mcp.php
 Line	Column	Type	Code	Message	Edit Link
 150	17	WARNING	WordPress.DB.DirectDatabaseQuery.SchemaChange	Attempting a database schema change is discouraged.	View in code editor (opens in a new tab)
 
@@ -101,5 +101,5 @@ Line	Column	Type	Code	Message	Edit Link
 
 FILE: models/model.php
 Line	Column	Type	Code	Message	Edit Link
-109	31	ERROR	PluginCheck.Security.DirectDB.UnescapedDBParameter	Unescaped parameter getPrefixedTable('evmcp_tools') . ' WHERE enabled = %d' used in $wpdb->get_results($wpdb->prepare(\r\n 'SELECT tool_name, token_estimate FROM ' . EasyVisualMcpUtils::getPrefixedTable('evmcp_tools') . ' WHERE enabled = %d',\r\n 1\r\n ))	View in code editor (opens in a new tab)
+109	31	ERROR	PluginCheck.Security.DirectDB.UnescapedDBParameter	Unescaped parameter getPrefixedTable('sflmcp_tools') . ' WHERE enabled = %d' used in $wpdb->get_results($wpdb->prepare(\r\n 'SELECT tool_name, token_estimate FROM ' . StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools') . ' WHERE enabled = %d',\r\n 1\r\n ))	View in code editor (opens in a new tab)
 

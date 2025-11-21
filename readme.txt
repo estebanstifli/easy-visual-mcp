@@ -1,6 +1,6 @@
-=== Easy Visual MCP ===
+=== StifLi Flex MCP ===
 Contributors: estebandezafra
-Donate link: https://github.com/estebanstifli/easy-visual-mcp
+Donate link: https://github.com/estebanstifli/stifli-flex-mcp
 Tags: mcp, chatgpt, ai, automation, rest-api
 Requires at least: 5.8
 Tested up to: 6.8
@@ -13,7 +13,7 @@ Transform your WordPress site into an AI-powered Model Context Protocol (MCP) se
 
 == Description ==
 
-Easy Visual MCP transforms your WordPress site into a powerful Model Context Protocol (MCP) server, exposing 129 tools that AI agents like ChatGPT, Claude, and LibreChat can use to manage your WordPress and WooCommerce site.
+StifLi Flex MCP transforms your WordPress site into a powerful Model Context Protocol (MCP) server, exposing 129 tools that AI agents like ChatGPT, Claude, and LibreChat can use to manage your WordPress and WooCommerce site.
 
 **Key Features:**
 
@@ -55,16 +55,16 @@ Easy Visual MCP transforms your WordPress site into a powerful Model Context Pro
 
 == Installation ==
 
-1. Upload the `easy-visual-mcp` folder to `/wp-content/plugins/` directory
+1. Upload the `stifli-flex-mcp` folder to `/wp-content/plugins/` directory
 2. Activate the plugin through the 'Plugins' menu in WordPress
-3. Go to Easy Visual MCP → Settings to configure your endpoint
+3. Go to StifLi Flex MCP → Settings to configure your endpoint
 4. (Optional) Generate a token for authenticated access
 5. Use the provided endpoint URLs to connect your AI client
 
 **Endpoints:**
 
-* HTTP JSON-RPC: `https://yoursite.com/wp-json/easy-visual-mcp/v1/messages`
-* SSE Streaming: `https://yoursite.com/wp-json/easy-visual-mcp/v1/sse`
+* HTTP JSON-RPC: `https://yoursite.com/wp-json/stifli-flex-mcp/v1/messages`
+* SSE Streaming: `https://yoursite.com/wp-json/stifli-flex-mcp/v1/sse`
 
 == Frequently Asked Questions ==
 

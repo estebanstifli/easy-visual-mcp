@@ -8,7 +8,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-class EasyVisualMcp_WC_Products {
+class StifliFlexMcp_WC_Products {
     
     /**
      * Get tool definitions for products

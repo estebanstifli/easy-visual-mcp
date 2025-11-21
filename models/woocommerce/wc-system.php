@@ -8,7 +8,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-class EasyVisualMcp_WC_System {
+class StifliFlexMcp_WC_System {
     
     public static function getTools() {
         return array(

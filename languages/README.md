@@ -7,21 +7,21 @@ This directory contains translation files for Easy Visual MCP.
 To generate the translation template file (.pot), use WP-CLI:
 
 ```bash
-wp i18n make-pot . languages/easy-visual-mcp.pot
+wp i18n make-pot . languages/stifli-flex-mcp.pot
 ```
 
 Or use the Poedit software to scan the plugin and generate the .pot file.
 
 ## Adding Translations
 
-1. Copy `easy-visual-mcp.pot` to `easy-visual-mcp-{locale}.po`
+1. Copy `stifli-flex-mcp.pot` to `stifli-flex-mcp-{locale}.po`
 2. Translate all strings in the .po file
 3. Generate the .mo file (usually automatic with translation tools)
 4. Both .po and .mo files should be placed in this directory
 
 Example for Spanish:
-- easy-visual-mcp-es_ES.po
-- easy-visual-mcp-es_ES.mo
+- stifli-flex-mcp-es_ES.po
+- stifli-flex-mcp-es_ES.mo
 
 ## Translation Tools
 
@@ -32,7 +32,7 @@ Example for Spanish:
 ## Current Status
 
 ✅ All user-facing strings are wrapped with translation functions
-✅ Text domain 'easy-visual-mcp' is consistent throughout
+✅ Text domain 'stifli-flex-mcp' is consistent throughout
 ✅ Domain path configured in plugin header
 ✅ load_plugin_textdomain() called on init
 

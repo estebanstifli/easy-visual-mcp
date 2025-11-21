@@ -1,30 +1,30 @@
-# Copilot Instructions for Easy Visual MCP
+# Copilot Instructions for StifLi Flex MCP
 
 ## Project Overview
-**Easy Visual MCP** is a WordPress plugin exposing WordPress management via JSON-RPC 2.0, designed for LLM integration (ChatGPT, Claude, etc.). It provides tool discovery (`tools/list`), execution (`tools/call`), and SSE streaming at `/wp-json/easy-visual-mcp/v1/`.
+**StifLi Flex MCP** is a WordPress plugin exposing WordPress management via JSON-RPC 2.0, designed for LLM integration (ChatGPT, Claude, etc.). It provides tool discovery (`tools/list`), execution (`tools/call`), and SSE streaming at `/wp-json/stifli-flex-mcp/v1/`.
 
 ## Architecture & Data Flow
 
 ### Request Flow (JSON-RPC 2.0)
-1. Client → `/wp-json/easy-visual-mcp/v1/messages` (POST) or `/sse` (GET for streaming)
+1. Client → `/wp-json/stifli-flex-mcp/v1/messages` (POST) or `/sse` (GET for streaming)
 2. `mod.php::canAccessMCP()` → token validation (Bearer header or `?token=` query param)
 3. `mod.php::handleDirectJsonRPC()` → method routing (`initialize`, `tools/list`, `tools/call`)
 4. `models/model.php::dispatchTool()` → tool execution with capability check
 5. Response → JSON-RPC result or error
 
 ### Key Components
-- **`easy-visual-mcp.php`**: Bootstrap (loads helpers/models, initializes `EasyVisualMcp`), table creation (`wp_evmcp_queue`, `wp_evmcp_tools`), seeding, cron scheduling
+- **`stifli-flex-mcp.php`**: Bootstrap (loads helpers/models, initializes `StifliFlexMcp`), table creation (`wp_SFLMCP_queue`, `wp_SFLMCP_tools`), seeding, cron scheduling
 - **`mod.php`**: Core logic – REST API registration, auth (`canAccessMCP`), JSON-RPC dispatch, SSE streaming, **two-tab admin UI** (Settings + Tools Management)
 - **`models/model.php`**: Tool registry (`getTools()`), dispatch logic (`dispatchTool()`), capability mapping (`getToolCapability()`), **tools filtering** (`getToolsList()`)
 - **Helpers**: `utils.php` (safe array access), `dispatcher.php` (filter wrapper), `frame.php` (stub for logging)
 
 ### SSE Streaming (Critical for ChatGPT Connectors)
-- SSE endpoint: `/wp-json/easy-visual-mcp/v1/sse` (GET or POST)
+- SSE endpoint: `/wp-json/stifli-flex-mcp/v1/sse` (GET or POST)
 - On connect, sends `event: endpoint` with `/messages` URL for client to POST to
 - Polls session queue every 200ms, sends `event: message` with JSON-RPC responses
 - Sends `event: heartbeat` every 10s, `event: bye` on disconnect/timeout (5min idle)
 - **Important**: Disables output buffering (`ob_end_flush()`, `X-Accel-Buffering: no`) to prevent CDN/proxy blocking
-- Responses are buffered in MySQL table `wp_evmcp_queue`; messages expire after 5 min and the `evmcp_clean_queue` cron job (hourly) purges old rows.
+- Responses are buffered in MySQL table `wp_SFLMCP_queue`; messages expire after 5 min and the `SFLMCP_clean_queue` cron job (hourly) purges old rows.
 
 ## Tool Development Pattern
 
@@ -53,11 +53,11 @@ case 'my_new_tool':
     $addResultText($r, "Success message");
     return $r;
 
-// 4. Add to wp_evmcp_tools table on activation (easy-visual-mcp.php::easy_visual_mcp_seed_initial_tools)
+// 4. Add to wp_SFLMCP_tools table on activation (stifli-flex-mcp.php::stifli_flex_mcp_seed_initial_tools)
 array('my_new_tool', 'Does X with Y. Returns Z.', 'WordPress - YourCategory', 1),
 ```
 
-**Important**: Only enabled tools (where `enabled = 1` in `wp_evmcp_tools`) are returned by `getToolsList()`. Users can enable/disable tools from the admin UI Tools Management tab.
+**Important**: Only enabled tools (where `enabled = 1` in `wp_SFLMCP_tools`) are returned by `getToolsList()`. Users can enable/disable tools from the admin UI Tools Management tab.
 
 ### Intent Classification (models/model.php::getIntentForTool)
 - **`read`**: Public tools (no confirmation) – e.g., `wp_get_posts`, `wp_get_users`
@@ -73,7 +73,7 @@ array('my_new_tool', 'Does X with Y. Returns Z.', 'WordPress - YourCategory', 1)
 // 2. Check Authorization: Bearer <token>
 // 3. Fallback to ?token=<token> query param
 // 4. On match → wp_set_current_user() to mapped user or admin
-// 5. Apply filters 'allow_evmcp' (extensible)
+// 5. Apply filters 'allow_SFLMCP' (extensible)
 ```
 
 ### Capability Enforcement (models/model.php::dispatchTool)
@@ -90,7 +90,7 @@ if ($required_cap && !current_user_can($required_cap)) {
 ### Testing with REST Client
 Use `examples/wordpress-mcp.http`:
 ```http
-POST https://your-site.test/wp-json/easy-visual-mcp/v1/messages
+POST https://your-site.test/wp-json/stifli-flex-mcp/v1/messages
 Authorization: Bearer YOUR_TOKEN
 Content-Type: application/json
 
@@ -109,16 +109,16 @@ Content-Type: application/json
 - Check WordPress debug.log or error_log
 
 ### Admin UI (Settings & Tools Management)
-- **Location**: WordPress Admin → Easy Visual MCP (top-level menu with dashicons-rest-api icon)
+- **Location**: WordPress Admin → StifLi Flex MCP (top-level menu with dashicons-rest-api icon)
 - **Two Tabs**:
-  - **Settings**: Generate/revoke tokens (AJAX `evmcp_generate_token`, `evmcp_revoke_token`), map token to WP user, endpoint URLs
-  - **Tools Management**: Enable/disable tools per category, updates `wp_evmcp_tools` table
+  - **Settings**: Generate/revoke tokens (AJAX `SFLMCP_generate_token`, `SFLMCP_revoke_token`), map token to WP user, endpoint URLs
+  - **Tools Management**: Enable/disable tools per category, updates `wp_SFLMCP_tools` table
 - **Registered in**: `mod.php::registerAdmin()`, `mod.php::renderSettingsTab()`, `mod.php::renderToolsTab()`
 
 ## Project-Specific Conventions
 
 ### Safe Array Access Pattern
-Always use `EasyVisualMcpUtils::getArrayValue($arr, 'key', $default)` instead of direct array access to prevent notices.
+Always use `StifliFlexMcpUtils::getArrayValue($arr, 'key', $default)` instead of direct array access to prevent notices.
 
 ### Result Construction (dispatchTool)
 ```php
@@ -145,8 +145,8 @@ The `id` field in JSON-RPC 2.0 can be **string, int, or null**. All methods hand
 ## Migration & Extension
 
 ### Porting Tools from ai-copilot (see MIGRACION_TOOLS.md)
-- Replace `WaicUtils` → `EasyVisualMcpUtils`
-- Replace `WaicFrame` → `EasyVisualMcpFrame`
+- Replace `WaicUtils` → `StifliFlexMcpUtils`
+- Replace `WaicFrame` → `StifliFlexMcpFrame`
 - Update tool array in `getTools()`
 - Copy/adapt dispatch case blocks
 - Test with `body_*.json` example files
@@ -181,15 +181,15 @@ The `id` field in JSON-RPC 2.0 can be **string, int, or null**. All methods hand
 - Modify auth: `mod.php` → `canAccessMCP()`
 - Admin UI: `mod.php` → `registerAdmin()`, `settingsPage()`
 - Test requests: `examples/wordpress-mcp.http` or `body_*.json` files
-- Queue storage: `mod.php::storeMessage()` / `fetchMessages()` (table `wp_evmcp_queue`)
-- Queue cleanup cron: `easy-visual-mcp.php::easy_visual_mcp_clean_queue()` (hook `evmcp_clean_queue` hourly)
-- Tools database: `easy-visual-mcp.php::easy_visual_mcp_maybe_create_tools_table()`, `easy_visual_mcp_seed_initial_tools()` (table `wp_evmcp_tools`)
+- Queue storage: `mod.php::storeMessage()` / `fetchMessages()` (table `wp_SFLMCP_queue`)
+- Queue cleanup cron: `stifli-flex-mcp.php::stifli_flex_mcp_clean_queue()` (hook `SFLMCP_clean_queue` hourly)
+- Tools database: `stifli-flex-mcp.php::stifli_flex_mcp_maybe_create_tools_table()`, `stifli_flex_mcp_seed_initial_tools()` (table `wp_SFLMCP_tools`)
 
 ### No Build Step
 Pure PHP plugin – edit files, reload WordPress. No npm/composer/webpack required.
 - Test requests: `examples/wordpress-mcp.http` or `body_*.json` files
-- Queue storage: `mod.php::storeMessage()` / `fetchMessages()` (table `wp_evmcp_queue`)
-- Queue cleanup cron: `easy-visual-mcp.php::easy_visual_mcp_clean_queue()` (hook `evmcp_clean_queue` hourly)
+- Queue storage: `mod.php::storeMessage()` / `fetchMessages()` (table `wp_SFLMCP_queue`)
+- Queue cleanup cron: `stifli-flex-mcp.php::stifli_flex_mcp_clean_queue()` (hook `SFLMCP_clean_queue` hourly)
 
 ### No Build Step
 Pure PHP plugin – edit files, reload WordPress. No npm/composer/webpack required.

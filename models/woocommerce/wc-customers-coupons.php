@@ -7,7 +7,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-class EasyVisualMcp_WC_Customers {
+class StifliFlexMcp_WC_Customers {
     
     public static function getTools() {
         return array(
@@ -265,7 +265,7 @@ class EasyVisualMcp_WC_Customers {
     }
 }
 
-class EasyVisualMcp_WC_Coupons {
+class StifliFlexMcp_WC_Coupons {
     
     public static function getTools() {
         return array(

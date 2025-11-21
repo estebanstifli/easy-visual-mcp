@@ -11,7 +11,7 @@ if ( class_exists( 'WooCommerce' ) ) {
 }
 
 // Model MCP con tools completas + intención/consentimiento
-class EasyVisualMcpModel {
+class StifliFlexMcpModel {
     private $tools = false;
 
     /**
@@ -88,7 +88,7 @@ class EasyVisualMcpModel {
 
     /**
      * Devuelve la lista de tools con categoría + intención + confirmación.
-     * Filtra por herramientas habilitadas en wp_evmcp_tools.
+     * Filtra por herramientas habilitadas en wp_sflmcp_tools.
      */
     public function getToolsList() {
         global $wpdb;
@@ -98,7 +98,7 @@ class EasyVisualMcpModel {
         }
         
         // Get enabled tools from database
-        $table = EasyVisualMcpUtils::getPrefixedTable('evmcp_tools', false);
+        $table = StifliFlexMcpUtils::getPrefixedTable('sflmcp_tools', false);
         $enabled_tools = array();
 
         // Check if table exists first.
@@ -108,9 +108,9 @@ class EasyVisualMcpModel {
         $table_exists = $wpdb->get_var($wpdb->prepare($table_exists_query, $like)) === $table;
         
         if ($table_exists) {
-            $tools_query = EasyVisualMcpUtils::formatSqlWithTables(
+            $tools_query = StifliFlexMcpUtils::formatSqlWithTables(
                 'SELECT tool_name, token_estimate FROM %s WHERE enabled = %%d',
-                'evmcp_tools'
+                'sflmcp_tools'
             );
             $results = $wpdb->get_results(
                 $wpdb->prepare($tools_query, 1),
@@ -128,7 +128,7 @@ class EasyVisualMcpModel {
         // Filter tools by enabled status
         $filtered_tools = array();
         foreach ($tools as $tool) {
-            $name = EasyVisualMcpUtils::getArrayValue($tool, 'name', '');
+            $name = StifliFlexMcpUtils::getArrayValue($tool, 'name', '');
             if ('' === $name) {
                 continue;
             }
@@ -145,9 +145,9 @@ class EasyVisualMcpModel {
                 $tool['intent'] = $meta['intent']; // read | sensitive_read | write
                 $tool['requires_confirmation'] = $meta['requires_confirmation']; // bool
                 if ($table_exists) {
-                    $tool['tokenEstimate'] = isset($enabled_tools[$name]) ? (int) $enabled_tools[$name] : EasyVisualMcpUtils::estimateToolTokenUsage($tool);
+                    $tool['tokenEstimate'] = isset($enabled_tools[$name]) ? (int) $enabled_tools[$name] : StifliFlexMcpUtils::estimateToolTokenUsage($tool);
                 } else {
-                    $tool['tokenEstimate'] = EasyVisualMcpUtils::estimateToolTokenUsage($tool);
+                    $tool['tokenEstimate'] = StifliFlexMcpUtils::estimateToolTokenUsage($tool);
                 }
                 
                 $filtered_tools[] = $tool;
@@ -1066,20 +1066,20 @@ class EasyVisualMcpModel {
 
             // Merge WooCommerce tools if available
             if ( class_exists( 'WooCommerce' ) ) {
-                if ( class_exists( 'EasyVisualMcp_WC_Products' ) ) {
-                    $tools = array_merge( $tools, EasyVisualMcp_WC_Products::getTools() );
+                if ( class_exists( 'StifliFlexMcp_WC_Products' ) ) {
+                    $tools = array_merge( $tools, StifliFlexMcp_WC_Products::getTools() );
                 }
-                if ( class_exists( 'EasyVisualMcp_WC_Orders' ) ) {
-                    $tools = array_merge( $tools, EasyVisualMcp_WC_Orders::getTools() );
+                if ( class_exists( 'StifliFlexMcp_WC_Orders' ) ) {
+                    $tools = array_merge( $tools, StifliFlexMcp_WC_Orders::getTools() );
                 }
-                if ( class_exists( 'EasyVisualMcp_WC_Customers' ) ) {
-                    $tools = array_merge( $tools, EasyVisualMcp_WC_Customers::getTools() );
+                if ( class_exists( 'StifliFlexMcp_WC_Customers' ) ) {
+                    $tools = array_merge( $tools, StifliFlexMcp_WC_Customers::getTools() );
                 }
-                if ( class_exists( 'EasyVisualMcp_WC_Coupons' ) ) {
-                    $tools = array_merge( $tools, EasyVisualMcp_WC_Coupons::getTools() );
+                if ( class_exists( 'StifliFlexMcp_WC_Coupons' ) ) {
+                    $tools = array_merge( $tools, StifliFlexMcp_WC_Coupons::getTools() );
                 }
-                if ( class_exists( 'EasyVisualMcp_WC_System' ) ) {
-                    $tools = array_merge( $tools, EasyVisualMcp_WC_System::getTools() );
+                if ( class_exists( 'StifliFlexMcp_WC_System' ) ) {
+                    $tools = array_merge( $tools, StifliFlexMcp_WC_System::getTools() );
                 }
             }
 
@@ -1230,20 +1230,20 @@ class EasyVisualMcpModel {
 
         // Merge WooCommerce capabilities if available
         if ( class_exists( 'WooCommerce' ) ) {
-            if ( class_exists( 'EasyVisualMcp_WC_Products' ) ) {
-                $map = array_merge( $map, EasyVisualMcp_WC_Products::getCapabilities() );
+            if ( class_exists( 'StifliFlexMcp_WC_Products' ) ) {
+                $map = array_merge( $map, StifliFlexMcp_WC_Products::getCapabilities() );
             }
-            if ( class_exists( 'EasyVisualMcp_WC_Orders' ) ) {
-                $map = array_merge( $map, EasyVisualMcp_WC_Orders::getCapabilities() );
+            if ( class_exists( 'StifliFlexMcp_WC_Orders' ) ) {
+                $map = array_merge( $map, StifliFlexMcp_WC_Orders::getCapabilities() );
             }
-            if ( class_exists( 'EasyVisualMcp_WC_Customers' ) ) {
-                $map = array_merge( $map, EasyVisualMcp_WC_Customers::getCapabilities() );
+            if ( class_exists( 'StifliFlexMcp_WC_Customers' ) ) {
+                $map = array_merge( $map, StifliFlexMcp_WC_Customers::getCapabilities() );
             }
-            if ( class_exists( 'EasyVisualMcp_WC_Coupons' ) ) {
-                $map = array_merge( $map, EasyVisualMcp_WC_Coupons::getCapabilities() );
+            if ( class_exists( 'StifliFlexMcp_WC_Coupons' ) ) {
+                $map = array_merge( $map, StifliFlexMcp_WC_Coupons::getCapabilities() );
             }
-            if ( class_exists( 'EasyVisualMcp_WC_System' ) ) {
-                $map = array_merge( $map, EasyVisualMcp_WC_System::getCapabilities() );
+            if ( class_exists( 'StifliFlexMcp_WC_System' ) ) {
+                $map = array_merge( $map, StifliFlexMcp_WC_System::getCapabilities() );
             }
         }
 
@@ -1252,8 +1252,8 @@ class EasyVisualMcpModel {
 
     public function dispatchTool($tool, $args, $id = null) {
         $r = array('jsonrpc' => '2.0', 'id' => $id);
-        $utils = 'EasyVisualMcpUtils';
-        $frame = class_exists('EasyVisualMcpFrame') ? EasyVisualMcpFrame::_() : null;
+        $utils = 'StifliFlexMcpUtils';
+        $frame = class_exists('StifliFlexMcpFrame') ? StifliFlexMcpFrame::_() : null;
         $addResultText = function(array &$r, string $text) {
             if (!isset($r['result']['content'])) {
                 $r['result']['content'] = [];
@@ -1883,7 +1883,7 @@ class EasyVisualMcpModel {
             case 'wp_upload_image_from_url':
                 $url = esc_url_raw($utils::getArrayValue($args, 'url'));
                 // Debug logging (remove for production or wrap in WP_DEBUG check)
-                // easy_visual_mcp_log('wp_upload_image_from_url: URL received = ' . $url);
+                // stifli_flex_mcp_log('wp_upload_image_from_url: URL received = ' . $url);
                 
                 if (!$url) { $r['error'] = array('code' => -42602, 'message' => 'url required'); break; }
                 if (!current_user_can('upload_files')) { $r['error'] = array('code' => 'permission_denied', 'message' => 'Insufficient permissions to upload files'); break; }
@@ -1901,28 +1901,28 @@ class EasyVisualMcpModel {
                     return $mimes;
                 });
                 
-                easy_visual_mcp_log('wp_upload_image_from_url: Starting download...');
+                stifli_flex_mcp_log('wp_upload_image_from_url: Starting download...');
                 $tmp = download_url($url);
                 
                 if (is_wp_error($tmp)) { 
-                    easy_visual_mcp_log('wp_upload_image_from_url: Download error = ' . $tmp->get_error_message());
+                    stifli_flex_mcp_log('wp_upload_image_from_url: Download error = ' . $tmp->get_error_message());
                     $r['error'] = array('code' => 'download_error', 'message' => $tmp->get_error_message()); 
                     break; 
                 }
                 
-                easy_visual_mcp_log('wp_upload_image_from_url: Downloaded to temp file = ' . $tmp);
+                stifli_flex_mcp_log('wp_upload_image_from_url: Downloaded to temp file = ' . $tmp);
                 
                 // Get file extension from URL or detect from downloaded file
                 $file = array();
                 $basename = wp_basename($url);
-                easy_visual_mcp_log('wp_upload_image_from_url: Original basename = ' . $basename);
+                stifli_flex_mcp_log('wp_upload_image_from_url: Original basename = ' . $basename);
                 
                 $parsed_url = wp_parse_url($url);
                 $path = isset($parsed_url['path']) ? $parsed_url['path'] : '';
                 
                 // If URL doesn't have a clear extension (e.g., Unsplash URLs), detect from file
                 if (!preg_match('/\.(jpg|jpeg|png|gif|webp)$/i', $basename)) {
-                    easy_visual_mcp_log('wp_upload_image_from_url: No extension in URL, detecting MIME type...');
+                    stifli_flex_mcp_log('wp_upload_image_from_url: No extension in URL, detecting MIME type...');
                     
                     // Try to detect MIME type from file content
                     if (function_exists('mime_content_type')) {
@@ -1933,7 +1933,7 @@ class EasyVisualMcpModel {
                         finfo_close($finfo);
                     }
                     
-                    easy_visual_mcp_log('wp_upload_image_from_url: Detected MIME type = ' . $mime);
+                    stifli_flex_mcp_log('wp_upload_image_from_url: Detected MIME type = ' . $mime);
                     
                     $ext = 'jpg'; // default
                     if (strpos($mime, 'png') !== false) $ext = 'png';
@@ -1941,7 +1941,7 @@ class EasyVisualMcpModel {
                     else if (strpos($mime, 'webp') !== false) $ext = 'webp';
                     
                     $basename = 'image-' . time() . '.' . $ext;
-                    easy_visual_mcp_log('wp_upload_image_from_url: New basename = ' . $basename);
+                    stifli_flex_mcp_log('wp_upload_image_from_url: New basename = ' . $basename);
                 }
                 
                 $file['name'] = $basename;
@@ -1955,24 +1955,24 @@ class EasyVisualMcpModel {
                 if (false === $fileLog) {
                     $fileLog = '[unserializable]';
                 }
-                easy_visual_mcp_log('wp_upload_image_from_url: File array = ' . $fileLog);
-                easy_visual_mcp_log('wp_upload_image_from_url: Calling media_handle_sideload...');
+                stifli_flex_mcp_log('wp_upload_image_from_url: File array = ' . $fileLog);
+                stifli_flex_mcp_log('wp_upload_image_from_url: Calling media_handle_sideload...');
                 
                 $att_id = media_handle_sideload($file, 0);
                 
                 if (is_wp_error($att_id)) { 
-                    easy_visual_mcp_log('wp_upload_image_from_url: Sideload error = ' . $att_id->get_error_message());
+                    stifli_flex_mcp_log('wp_upload_image_from_url: Sideload error = ' . $att_id->get_error_message());
                     $errorDataLog = wp_json_encode($att_id->get_error_data());
                     if (false === $errorDataLog) {
                         $errorDataLog = '[unserializable]';
                     }
-                    easy_visual_mcp_log('wp_upload_image_from_url: Sideload error data = ' . $errorDataLog);
+                    stifli_flex_mcp_log('wp_upload_image_from_url: Sideload error data = ' . $errorDataLog);
                     @wp_delete_file($file['tmp_name']); 
                     $r['error'] = array('code' => 'sideload_error', 'message' => $att_id->get_error_message()); 
                     break; 
                 }
                 
-                easy_visual_mcp_log('wp_upload_image_from_url: Success! Attachment ID = ' . $att_id);
+                stifli_flex_mcp_log('wp_upload_image_from_url: Success! Attachment ID = ' . $att_id);
                 
                 $att_url = wp_get_attachment_url($att_id);
                 
@@ -2595,40 +2595,40 @@ class EasyVisualMcpModel {
                     $dispatched = false;
                     
                     // Try WC Products module
-                    if ( class_exists( 'EasyVisualMcp_WC_Products' ) ) {
-                        $result = EasyVisualMcp_WC_Products::dispatch( $tool, $args, $r, $addResultText, $utils );
+                    if ( class_exists( 'StifliFlexMcp_WC_Products' ) ) {
+                        $result = StifliFlexMcp_WC_Products::dispatch( $tool, $args, $r, $addResultText, $utils );
                         if ( $result !== null ) {
                             return $result;
                         }
                     }
                     
                     // Try WC Orders module
-                    if ( class_exists( 'EasyVisualMcp_WC_Orders' ) ) {
-                        $result = EasyVisualMcp_WC_Orders::dispatch( $tool, $args, $r, $addResultText, $utils );
+                    if ( class_exists( 'StifliFlexMcp_WC_Orders' ) ) {
+                        $result = StifliFlexMcp_WC_Orders::dispatch( $tool, $args, $r, $addResultText, $utils );
                         if ( $result !== null ) {
                             return $result;
                         }
                     }
                     
                     // Try WC Customers module
-                    if ( class_exists( 'EasyVisualMcp_WC_Customers' ) ) {
-                        $result = EasyVisualMcp_WC_Customers::dispatch( $tool, $args, $r, $addResultText, $utils );
+                    if ( class_exists( 'StifliFlexMcp_WC_Customers' ) ) {
+                        $result = StifliFlexMcp_WC_Customers::dispatch( $tool, $args, $r, $addResultText, $utils );
                         if ( $result !== null ) {
                             return $result;
                         }
                     }
                     
                     // Try WC Coupons module
-                    if ( class_exists( 'EasyVisualMcp_WC_Coupons' ) ) {
-                        $result = EasyVisualMcp_WC_Coupons::dispatch( $tool, $args, $r, $addResultText, $utils );
+                    if ( class_exists( 'StifliFlexMcp_WC_Coupons' ) ) {
+                        $result = StifliFlexMcp_WC_Coupons::dispatch( $tool, $args, $r, $addResultText, $utils );
                         if ( $result !== null ) {
                             return $result;
                         }
                     }
                     
                     // Try WC System module
-                    if ( class_exists( 'EasyVisualMcp_WC_System' ) ) {
-                        $result = EasyVisualMcp_WC_System::dispatch( $tool, $args, $r, $addResultText, $utils );
+                    if ( class_exists( 'StifliFlexMcp_WC_System' ) ) {
+                        $result = StifliFlexMcp_WC_System::dispatch( $tool, $args, $r, $addResultText, $utils );
                         if ( $result !== null ) {
                             return $result;
                         }

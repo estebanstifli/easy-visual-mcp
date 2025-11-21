@@ -8,7 +8,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-class EasyVisualMcp_WC_Orders {
+class StifliFlexMcp_WC_Orders {
     
     public static function getTools() {
         return array(
