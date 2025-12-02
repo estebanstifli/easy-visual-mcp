@@ -4,7 +4,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 class StifliFlexMcp {
 	private $logging = false;
-	private $mcpToken = null;
 	private $addedFilter = false;
 	private $namespace = 'stifli-flex-mcp/v1';
 	private $sessionID = null;
@@ -28,8 +27,6 @@ class StifliFlexMcp {
 			add_action('admin_menu', array($this, 'registerAdmin'));
 			add_action('admin_init', array($this, 'registerSettings'));
 			add_action('admin_enqueue_scripts', array($this, 'enqueueAdminScripts'));
-			// AJAX handler for token generation
-			add_action('wp_ajax_sflmcp_generate_token', array($this, 'ajax_generate_token'));
 			// AJAX handlers for profiles management
 			add_action('wp_ajax_sflmcp_create_profile', array($this, 'ajax_create_profile'));
 			add_action('wp_ajax_sflmcp_update_profile', array($this, 'ajax_update_profile'));
@@ -43,17 +40,6 @@ class StifliFlexMcp {
 	}
 
 	public function restApiInit() {
-		if ($this->mcpToken === null) {
-			// Try loading a configured token from options (admin can set this option)
-			$this->mcpToken = get_option('stifli_flex_mcp_token', '');
-			if (empty($this->mcpToken)) {
-				$this->mcpToken = null;
-			}
-		}
-		if (!empty($this->mcpToken) && !$this->addedFilter) {
-			StifliFlexMcpDispatcher::addFilter('allow_SFLMCP', array($this, 'authViaBeaberToken'), 10, 2);
-			$this->addedFilter = true;
-		}
 		register_rest_route($this->namespace, '/sse', array(
 			'methods' => 'GET',
 			'callback' => array($this, 'handleSSE'),
@@ -78,65 +64,24 @@ class StifliFlexMcp {
 		StifliFlexMcpDispatcher::addFilter('sflmcp_callback', array($this, 'handleCallback'), 10, 4);
 	}
 
-	public function canAccessMCP( $request ) {
-		// Token is required - deny access if not configured
-		if (empty($this->mcpToken)) {
-			stifli_flex_mcp_log('canAccessMCP: no token configured, access denied (token is required)');
-			return false;
-		}
-		$isAdmin = current_user_can('manage_options');
-		$hdr = $request->get_header('Authorization');
-		$qp = $request->get_param('token');
-		$masked = $this->maskToken($this->mcpToken);
-		stifli_flex_mcp_log(sprintf('canAccessMCP: isAdmin=%s, header=%s, query=%s, stored=%s', $isAdmin ? '1':'0', $hdr ? 'present' : 'none', $qp ? 'present' : 'none', $masked));
-		// Fallback: check Authorization header or token query param directly (normalize before compare)
-		try {
-			$hdrValue = $request->get_header('Authorization');
-			$incoming = null;
-			if ($hdrValue && preg_match('/Bearer\s+(.+)/i', $hdrValue, $m)) {
-				$incoming = $m[1];
-			}
-			if (empty($incoming)) {
-				$qpVal = $request->get_param('token');
-				if (!empty($qpVal)) {
-					$incoming = $qpVal;
-				}
-			}
-			if (!empty($incoming)) {
-				// normalize: urldecode, trim, sanitize
-				$norm = sanitize_text_field(rawurldecode(trim((string)$incoming)));
-				$stored = sanitize_text_field((string)$this->mcpToken);
-				if (!empty($stored) && hash_equals($stored, $norm)) {
-					// matched token -> set mapped user or fallback admin
-					$user_id = intval(get_option('stifli_flex_mcp_token_user', 0));
-					if ($user_id && get_userdata($user_id)) {
-						wp_set_current_user($user_id);
-					} else {
-						if (class_exists('StifliFlexMcpUtils') && method_exists('StifliFlexMcpUtils', 'setAdminUser')) {
-							StifliFlexMcpUtils::setAdminUser();
-						}
-					}
-					stifli_flex_mcp_log('canAccessMCP: token match -> access granted');
-					return true;
-				} else {
-					stifli_flex_mcp_log('canAccessMCP: token provided but did not match stored token');
-				}
-			}
-		} catch (Exception $e) {
-			stifli_flex_mcp_log('canAccessMCP: exception during token fallback: ' . $e->getMessage());
-		}
-
-		return StifliFlexMcpDispatcher::applyFilters('allow_SFLMCP', $isAdmin, $request);
-	}
-
 	/**
-	 * Mask a token for safe logging (keep first/last 4 chars)
+	 * Check if the request can access the MCP endpoint.
+	 * WordPress 5.6+ handles Application Password authentication natively.
+	 * This method only checks that the user has sufficient capabilities.
+	 * 
+	 * @see https://developer.wordpress.org/rest-api/using-the-rest-api/authentication/
+	 * @see https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/
 	 */
-	private function maskToken($t) {
-		if (empty($t) || !is_string($t)) return '(empty)';
-		$len = strlen($t);
-		if ($len <= 8) return str_repeat('*', $len);
-		return substr($t,0,4) . str_repeat('*', max(0,$len-8)) . substr($t,-4);
+	public function canAccessMCP( $request ) {
+		$current_user_id = get_current_user_id();
+		
+		if ($current_user_id > 0 && current_user_can('edit_posts')) {
+			stifli_flex_mcp_log(sprintf('canAccessMCP: user %d has sufficient capabilities', $current_user_id));
+			return true;
+		}
+		
+		stifli_flex_mcp_log('canAccessMCP: Access denied - no authenticated user with edit_posts capability');
+		return false;
 	}
 
 	public function handleCallback( $result, string $tool, array $args, $id ) {
@@ -149,46 +94,6 @@ class StifliFlexMcp {
 			return $result;
 		}
 		return $this->getModel()->dispatchTool($tool, $args, $id);
-	}
-
-	public function authViaBeaberToken($allow, $request) {
-		$hdr = $request->get_header('Authorization');
-		if (!$hdr && !empty($this->mcpToken)) {
-			$token = sanitize_text_field($request->get_param('token'));
-			if ($token && hash_equals($this->mcpToken, $token)) {
-				// If a specific user ID is configured for the token, switch to that user.
-				$user_id = intval(get_option('stifli_flex_mcp_token_user', 0));
-				if ($user_id && get_userdata($user_id)) {
-					wp_set_current_user($user_id);
-					return true;
-				}
-				// fallback: previous behavior
-				if (class_exists('StifliFlexMcpUtils') && method_exists('StifliFlexMcpUtils', 'setAdminUser')) {
-					StifliFlexMcpUtils::setAdminUser();
-				}
-				return true;
-			}
-			return false;
-		}
-		if ($hdr && preg_match('/Bearer\s+(.+)/i', $hdr, $m)) {
-			$token = trim($m[1]);
-			if (!empty($this->mcpToken) && hash_equals($this->mcpToken, $token)) {
-				$user_id = intval(get_option('stifli_flex_mcp_token_user', 0));
-				if ($user_id && get_userdata($user_id)) {
-					wp_set_current_user($user_id);
-					return true;
-				}
-				if (class_exists('StifliFlexMcpUtils') && method_exists('StifliFlexMcpUtils', 'setAdminUser')) {
-					StifliFlexMcpUtils::setAdminUser();
-				}
-				return true;
-			}
-			return false;
-		}
-		if (!empty($this->mcpToken)) {
-			return false;
-		}
-		return $allow;
 	}
 
 	private function getSSEid($req) {
@@ -230,9 +135,7 @@ class StifliFlexMcp {
 		$this->sessionID = $this->getSSEid($request);
 		$this->lastAction = time();
 		$msgUri = sprintf('%s/messages?session_id=%s', rest_url($this->namespace), $this->sessionID);
-		if (!empty($this->mcpToken)) {
-			$msgUri .= '&token=' . rawurlencode((string) $this->mcpToken);
-		}
+		// Note: Client must include HTTP Basic auth header when posting to msgUri
 		stifli_flex_mcp_log('handleSSE: sessionID=' . $this->sessionID . ' msgUri=' . $msgUri);
 		$this->reply('endpoint', $msgUri, 'text');
 		while (true) {
@@ -659,27 +562,6 @@ class StifliFlexMcp {
 		return new StifliFlexMcpModel();
 	}
     
-	/**
-	 * AJAX: generate a new token and return it (does not persist to options until admin saves)
-	 */
-	public function ajax_generate_token() {
-		if (!current_user_can('manage_options')) {
-			wp_send_json_error(array('message' => 'No permission'), 403);
-		}
-		check_ajax_referer('SFLMCP-admin');
-		try {
-			if (function_exists('random_bytes')) {
-				$token = bin2hex(random_bytes(16));
-			} else {
-				$token = wp_generate_password(32, false, false);
-			}
-			// Return token to UI; admin must click Save to persist to options
-			wp_send_json_success(array('token' => $token));
-		} catch (Exception $e) {
-			wp_send_json_error(array('message' => $e->getMessage()), 500);
-		}
-	}
-    
 	// ============ PROFILE MANAGEMENT AJAX HANDLERS ============
 	
 	public function ajax_apply_profile() {
@@ -1067,8 +949,7 @@ class StifliFlexMcp {
 	 * Register settings used by the plugin
 	 */
 	public function registerSettings() {
-		register_setting('StifLi_Flex_MCP', 'stifli_flex_mcp_token', array('type' => 'string', 'sanitize_callback' => 'sanitize_text_field'));
-		register_setting('StifLi_Flex_MCP', 'stifli_flex_mcp_token_user', array('type' => 'integer', 'sanitize_callback' => 'intval'));
+		// No custom settings needed - uses WordPress Application Passwords
 	}
 
 	/**
@@ -1085,7 +966,7 @@ class StifliFlexMcp {
 			'sflmcp-admin-settings',
 			plugin_dir_url(__FILE__) . 'assets/admin-settings.js',
 			array(),
-			'1.0.1',
+			'1.0.3',
 			true
 		);
 
@@ -1093,10 +974,7 @@ class StifliFlexMcp {
 		wp_localize_script('sflmcp-admin-settings', 'sflmcpSettings', array(
 			'ajaxUrl' => admin_url('admin-ajax.php'),
 			'nonce' => wp_create_nonce('SFLMCP-admin'),
-			'token' => get_option('stifli_flex_mcp_token', ''),
 			'i18n' => array(
-				'tokenGenerated' => __('Token generated. Save changes to persist it in the option.', 'stifli-flex-mcp'),
-				'errorGenerating' => __('Error generating token', 'stifli-flex-mcp'),
 				'urlCopied' => __('URL copied', 'stifli-flex-mcp'),
 				'headerCopied' => __('Header copied', 'stifli-flex-mcp'),
 			),
@@ -1166,102 +1044,110 @@ class StifliFlexMcp {
 	}
 	
 	private function renderSettingsTab() {
-		// Token is generated on plugin activation, just read it here
-		$token = get_option('stifli_flex_mcp_token', '');
-		
 		$endpoint = rest_url($this->namespace . '/messages');
-		$users = get_users(array('orderby' => 'display_name', 'fields' => array('ID','display_name','user_login')));
+		$current_user = wp_get_current_user();
+		$profile_url = get_edit_profile_url($current_user->ID) . '#application-passwords-section';
 		
-		// Get token user (set during activation)
-		$token_user = intval(get_option('stifli_flex_mcp_token_user', 0));
+		// Build endpoint URL with auth placeholder
+		$parsed = wp_parse_url($endpoint);
+		$endpoint_with_auth = $parsed['scheme'] . '://' . $current_user->user_login . ':YOUR_APP_PASSWORD@' . $parsed['host'] . (isset($parsed['port']) ? ':' . $parsed['port'] : '') . $parsed['path'];
 		?>
-		<form method="post" action="options.php">
-			<?php settings_fields('StifLi_Flex_MCP'); ?>
-			<?php do_settings_sections('StifLi_Flex_MCP'); ?>
-			<table class="form-table">
-				<tr valign="top">
-					<th scope="row"><?php echo esc_html__('Token (Bearer)', 'stifli-flex-mcp'); ?></th>
-					<td>
-						<input id="sflmcp_token_field" type="text" name="stifli_flex_mcp_token" value="<?php echo esc_attr($token); ?>" class="regular-text" readonly />
-						<p class="description"><?php echo esc_html__('Security token required for API access. This token was generated when the plugin was activated.', 'stifli-flex-mcp'); ?></p>
-						<p>
-							<button id="sflmcp_generate" class="button button-secondary" type="button"><?php echo esc_html__('Regenerate Token', 'stifli-flex-mcp'); ?></button>
-							<span id="sflmcp_spinner" style="display:none;margin-left:10px;"><?php echo esc_html__('Processing...', 'stifli-flex-mcp'); ?></span>
-						</p>
-					</td>
-				</tr>
-				<tr valign="top">
-					<th scope="row"><?php echo esc_html__('Assign Token to User', 'stifli-flex-mcp'); ?></th>
-					<td>
-						<select name="stifli_flex_mcp_token_user">
-							<?php foreach ($users as $u): ?>
-								<option value="<?php echo esc_attr(intval($u->ID)); ?>" <?php selected($token_user, intval($u->ID)); ?>><?php echo esc_html($u->display_name . ' (' . $u->user_login . ')'); ?></option>
-							<?php endforeach; ?>
-						</select>
-						<p class="description"><?php echo esc_html__('Authenticated calls with the token will be executed with this user\'s permissions.', 'stifli-flex-mcp'); ?></p>
-					</td>
-				</tr>
-				<tr valign="top">
-					<th scope="row"><?php echo esc_html__('MCP Endpoint', 'stifli-flex-mcp'); ?></th>
-					<td>
-						<p><strong><?php echo esc_html__('JSON-RPC 2.0 Endpoint:', 'stifli-flex-mcp'); ?></strong></p>
-						<code id="sflmcp_endpoint" style="display:block;background:#f0f0f0;padding:8px;margin:5px 0;font-size:13px;"><?php echo esc_html($endpoint); ?></code>
-						<p class="description"><?php echo esc_html__('This endpoint accepts JSON-RPC 2.0 calls (methods: tools/list, tools/call). Use this URL in your MCP client or connector.', 'stifli-flex-mcp'); ?></p>
-					</td>
-				</tr>
-			</table>
-			
-			<h2><?php echo esc_html__('🚀 Quick Start Guide', 'stifli-flex-mcp'); ?></h2>
-			
-			<h3><?php echo esc_html__('1. Copy Your Endpoint', 'stifli-flex-mcp'); ?></h3>
-			<p><?php echo esc_html__('Use one of these authentication methods:', 'stifli-flex-mcp'); ?></p>
-			
-			<table class="form-table" style="background:#f9f9f9;border:1px solid #ddd;padding:15px;margin:10px 0;">
-				<tr>
-					<th style="width:200px;padding:10px;"><?php echo esc_html__('Endpoint with token:', 'stifli-flex-mcp'); ?></th>
-					<td style="padding:10px;">
-						<input type="text" id="sflmcp_url_with_token" class="large-text code" readonly style="background:#fff;" onclick="this.select();" />
-						<button id="sflmcp_copy_url" class="button" style="margin-left:5px;"><?php echo esc_html__('📋 Copy', 'stifli-flex-mcp'); ?></button>
-						<p class="description"><?php echo esc_html__('Token included in URL (recommended for most clients).', 'stifli-flex-mcp'); ?></p>
-					</td>
-				</tr>
-				<tr>
-					<th style="padding:10px;"><?php echo esc_html__('Authorization Header:', 'stifli-flex-mcp'); ?></th>
-					<td style="padding:10px;">
-						<input type="text" id="sflmcp_auth_header" class="large-text code" readonly style="background:#fff;" onclick="this.select();" />
-						<button id="sflmcp_copy_header" class="button" style="margin-left:5px;"><?php echo esc_html__('📋 Copy', 'stifli-flex-mcp'); ?></button>
-						<p class="description"><?php echo esc_html__('Use this header for Bearer authentication (alternative to URL token).', 'stifli-flex-mcp'); ?></p>
-					</td>
-				</tr>
-			</table>
-			
-			<h3><?php echo esc_html__('2. Test Your Endpoint', 'stifli-flex-mcp'); ?></h3>
-			<p><?php echo esc_html__('Verify it works with these commands:', 'stifli-flex-mcp'); ?></p>
-			
-			<p><strong><?php echo esc_html__('Option A: With Authorization header', 'stifli-flex-mcp'); ?></strong></p>
-			<pre style="background:#2c3e50;color:#ecf0f1;border:none;padding:15px;overflow:auto;border-radius:4px;">curl -X POST '<?php echo esc_url($endpoint); ?>' \
+		
+		<h2><?php echo esc_html__('🔐 Authentication with Application Passwords', 'stifli-flex-mcp'); ?></h2>
+		
+		<div style="background:#f0f9ff;border:1px solid #0073aa;padding:20px;margin:20px 0;border-radius:4px;">
+			<h3 style="margin-top:0;color:#0073aa;"><?php echo esc_html__('How it works', 'stifli-flex-mcp'); ?></h3>
+			<p><?php echo esc_html__('This plugin uses WordPress Application Passwords for secure API authentication. This is the recommended authentication method by WordPress.org.', 'stifli-flex-mcp'); ?></p>
+			<ol>
+				<li><?php echo esc_html__('Create an Application Password in your WordPress profile', 'stifli-flex-mcp'); ?></li>
+				<li><?php echo esc_html__('Use HTTP Basic Authentication with your username and application password', 'stifli-flex-mcp'); ?></li>
+				<li><?php echo esc_html__('API calls will execute with your user permissions', 'stifli-flex-mcp'); ?></li>
+			</ol>
+			<p>
+				<a href="<?php echo esc_url($profile_url); ?>" class="button button-primary" target="_blank">
+					<?php echo esc_html__('🔑 Create Application Password', 'stifli-flex-mcp'); ?>
+				</a>
+			</p>
+		</div>
+		
+		<h2><?php echo esc_html__('📡 MCP Endpoint', 'stifli-flex-mcp'); ?></h2>
+		
+		<table class="form-table">
+			<tr valign="top">
+				<th scope="row"><?php echo esc_html__('JSON-RPC 2.0 Endpoint', 'stifli-flex-mcp'); ?></th>
+				<td>
+					<code id="sflmcp_endpoint" style="display:block;background:#f0f0f0;padding:8px;margin:5px 0;font-size:13px;"><?php echo esc_html($endpoint); ?></code>
+					<button type="button" class="button" onclick="navigator.clipboard.writeText('<?php echo esc_js($endpoint); ?>');alert('<?php echo esc_js(__('Endpoint copied!', 'stifli-flex-mcp')); ?>');"><?php echo esc_html__('📋 Copy', 'stifli-flex-mcp'); ?></button>
+					<p class="description"><?php echo esc_html__('Main endpoint for JSON-RPC 2.0 calls (methods: tools/list, tools/call).', 'stifli-flex-mcp'); ?></p>
+				</td>
+			</tr>
+			<tr valign="top">
+				<th scope="row"><?php echo esc_html__('Endpoint for Claude/ChatGPT', 'stifli-flex-mcp'); ?></th>
+				<td>
+					<code id="sflmcp_endpoint_auth" style="display:block;background:#f0f0f0;padding:8px;margin:5px 0;font-size:13px;word-break:break-all;"><?php echo esc_html($endpoint_with_auth); ?></code>
+					<button type="button" class="button" onclick="navigator.clipboard.writeText('<?php echo esc_js($endpoint_with_auth); ?>');alert('<?php echo esc_js(__('Endpoint copied! Remember to replace YOUR_APP_PASSWORD with your actual Application Password (without spaces).', 'stifli-flex-mcp')); ?>');"><?php echo esc_html__('📋 Copy', 'stifli-flex-mcp'); ?></button>
+					<p class="description"><?php echo esc_html__('Use this URL format for Claude, ChatGPT, and other MCP clients. Replace YOUR_APP_PASSWORD with your Application Password (without spaces).', 'stifli-flex-mcp'); ?></p>
+				</td>
+			</tr>
+		</table>
+		
+		<h2><?php echo esc_html__('🚀 Quick Start Guide', 'stifli-flex-mcp'); ?></h2>
+		
+		<h3><?php echo esc_html__('Step 1: Create an Application Password', 'stifli-flex-mcp'); ?></h3>
+		<ol>
+			<li><?php echo sprintf(
+				/* translators: %s: link to user profile */
+				esc_html__('Go to %s', 'stifli-flex-mcp'),
+				'<a href="' . esc_url($profile_url) . '" target="_blank">' . esc_html__('your profile page', 'stifli-flex-mcp') . '</a>'
+			); ?></li>
+			<li><?php echo esc_html__('Scroll to "Application Passwords" section', 'stifli-flex-mcp'); ?></li>
+			<li><?php echo esc_html__('Enter a name like "MCP Client" and click "Add New Application Password"', 'stifli-flex-mcp'); ?></li>
+			<li><?php echo esc_html__('Copy the generated password (it will only be shown once!)', 'stifli-flex-mcp'); ?></li>
+		</ol>
+		
+		<div style="background:#e8f5e9;border:1px solid #4caf50;padding:12px 15px;margin:10px 0 20px;border-radius:4px;">
+			<strong>💡 <?php echo esc_html__('Tip:', 'stifli-flex-mcp'); ?></strong>
+			<?php echo esc_html__('WordPress displays the password with spaces for readability (e.g., "SbfX irNe J5t3 OUNK"). You can use it with or without spaces - both work! For cleaner code, remove the spaces when configuring your client.', 'stifli-flex-mcp'); ?>
+		</div>
+		
+		<h3><?php echo esc_html__('Step 2: Test Your Endpoint', 'stifli-flex-mcp'); ?></h3>
+		<p><?php echo esc_html__('Use HTTP Basic Authentication with your WordPress username and the application password:', 'stifli-flex-mcp'); ?></p>
+		
+		<pre style="background:#2c3e50;color:#ecf0f1;border:none;padding:15px;overflow:auto;border-radius:4px;">curl -X POST '<?php echo esc_url($endpoint); ?>' \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer &lt;YOUR_TOKEN&gt;' \
+  -u '<?php echo esc_html($current_user->user_login); ?>:YOUR_APPLICATION_PASSWORD' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</pre>
-			
-			<p><strong><?php echo esc_html__('Option B: With token in URL', 'stifli-flex-mcp'); ?></strong></p>
-			<pre style="background:#2c3e50;color:#ecf0f1;border:none;padding:15px;overflow:auto;border-radius:4px;">curl -X POST '<?php echo esc_url($endpoint); ?>?token=&lt;YOUR_TOKEN&gt;' \
+		
+		<p><?php echo esc_html__('Or with the Authorization header:', 'stifli-flex-mcp'); ?></p>
+		<pre style="background:#2c3e50;color:#ecf0f1;border:none;padding:15px;overflow:auto;border-radius:4px;">curl -X POST '<?php echo esc_url($endpoint); ?>' \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Basic BASE64_ENCODED_CREDENTIALS' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</pre>
-			
-			<h3><?php echo esc_html__('3. Configure in Your Client', 'stifli-flex-mcp'); ?></h3>
-			<p><?php echo esc_html__('Example configuration for MCP clients:', 'stifli-flex-mcp'); ?></p>
-			<pre style="background:#f7f7f7;border:1px solid #ddd;padding:15px;overflow:auto;border-radius:4px;">{
+		
+		<p class="description"><?php echo esc_html__('Note: BASE64_ENCODED_CREDENTIALS = base64(username:application_password)', 'stifli-flex-mcp'); ?></p>
+		
+		<h3><?php echo esc_html__('Step 3: Configure Your MCP Client', 'stifli-flex-mcp'); ?></h3>
+		<p><?php echo esc_html__('Example configuration:', 'stifli-flex-mcp'); ?></p>
+		<pre style="background:#f7f7f7;border:1px solid #ddd;padding:15px;overflow:auto;border-radius:4px;">{
   "url": "<?php echo esc_url($endpoint); ?>",
-  "auth": "Bearer &lt;YOUR_TOKEN&gt;",
+  "auth": {
+    "type": "basic",
+    "username": "<?php echo esc_html($current_user->user_login); ?>",
+    "password": "YOUR_APPLICATION_PASSWORD"
+  },
   "protocol": "JSON-RPC 2.0",
   "methods": ["tools/list", "tools/call"]
 }</pre>
-			
-			<?php submit_button(); ?>
-		</form>
-		</p>
-
+		
+		<div style="background:#fff8e1;border:1px solid #ff9800;padding:15px;margin:20px 0;border-radius:4px;">
+			<h4 style="margin-top:0;color:#e65100;">⚠️ <?php echo esc_html__('Security Notes', 'stifli-flex-mcp'); ?></h4>
+			<ul style="margin-bottom:0;">
+				<li><?php echo esc_html__('Application Passwords are tied to your WordPress user - API calls execute with your permissions', 'stifli-flex-mcp'); ?></li>
+				<li><?php echo esc_html__('You can revoke an Application Password at any time from your profile', 'stifli-flex-mcp'); ?></li>
+				<li><?php echo esc_html__('Create separate Application Passwords for different clients/integrations', 'stifli-flex-mcp'); ?></li>
+				<li><?php echo esc_html__('Always use HTTPS in production to protect credentials', 'stifli-flex-mcp'); ?></li>
+			</ul>
+		</div>
 		
 		<?php
 	}

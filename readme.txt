@@ -17,12 +17,12 @@ StifLi Flex MCP transforms your WordPress site into a powerful Model Context Pro
 
 **Key Features:**
 
-* 55 WordPress tools (posts, pages, users, comments, media, taxonomies, options)
+* 55 WordPress tools (posts, pages, comments, media, taxonomies, options)
 * 61 WooCommerce tools (products, orders, coupons, shipping, taxes, webhooks)
 * JSON-RPC 2.0 compliant REST endpoint
 * Server-Sent Events (SSE) support for real-time streaming
 * Profile-based tool management (8 predefined profiles + custom profiles)
-* Token-based authentication with user mapping
+* WordPress Application Passwords authentication (recommended by WordPress.org)
 * Compatible with ChatGPT Custom Connectors, Claude Desktop, LibreChat
 * Granular permissions control
 
@@ -47,8 +47,8 @@ StifLi Flex MCP transforms your WordPress site into a powerful Model Context Pro
 
 **Security Features:**
 
-* Required token authentication (auto-generated on activation)
-* User permission mapping
+* WordPress Application Passwords (native WordPress 5.6+ feature)
+* HTTP Basic Authentication (industry standard)
 * Tool-level capability checks
 * Profile-based tool restrictions
 
@@ -56,8 +56,9 @@ StifLi Flex MCP transforms your WordPress site into a powerful Model Context Pro
 
 1. Upload the `stifli-flex-mcp` folder to `/wp-content/plugins/` directory
 2. Activate the plugin through the 'Plugins' menu in WordPress
-3. Go to StifLi Flex MCP → Settings to view your security token (generated automatically)
-4. Use the provided endpoint URLs to connect your AI client
+3. Go to StifLi Flex MCP → Settings for setup instructions
+4. Create an Application Password in your WordPress profile (Users → Profile → Application Passwords)
+5. Use HTTP Basic Authentication with your username and application password
 
 **Endpoints:**
 
@@ -72,23 +73,24 @@ Model Context Protocol (MCP) is a standard protocol for exposing tools and data 
 
 = How do I connect ChatGPT? =
 
-1. Copy your token from Settings (generated automatically on activation)
+1. Create an Application Password in your WordPress profile (Users → Profile)
 2. Create a custom connector in ChatGPT
-3. Use the SSE endpoint URL with your token
+3. Use the SSE endpoint URL with HTTP Basic Authentication
 4. ChatGPT will discover all available tools automatically
 
 = Is this safe for production sites? =
 
 Yes, when configured properly:
-* Token authentication is required (generated automatically on activation)
-* Map tokens to users with minimal permissions
+* Uses WordPress Application Passwords (native security feature)
+* Each Application Password is tied to a WordPress user with specific permissions
 * Use profile-based restrictions (e.g., "WordPress Read Only")
 * Review enabled tools in the Tools Management tab
+* You can revoke Application Passwords at any time
 
 = What permissions do AI agents have? =
 
 Permissions are determined by:
-1. The WordPress user mapped to the authentication token
+1. The WordPress user's Application Password used for authentication
 2. The active profile (which tools are enabled)
 3. Individual tool capability requirements
 
@@ -118,7 +120,7 @@ Absolutely! The 55 WordPress tools work independently. WooCommerce tools are opt
 
 == Screenshots ==
 
-1. Settings tab - Configure tokens and view endpoint URLs
+1. Settings tab - Setup instructions and endpoint URLs
 2. Profiles tab - Manage tool configurations
 3. WordPress Tools tab - Enable/disable WordPress tools
 4. WooCommerce Tools tab - Manage WooCommerce tools
@@ -127,12 +129,20 @@ Absolutely! The 55 WordPress tools work independently. WooCommerce tools are opt
 
 == Changelog ==
 
+= 1.0.3 =
+* Security: Replaced custom token authentication with WordPress Application Passwords
+* Security: Removed wp_set_current_user calls for compliance with WordPress.org guidelines
+* Removed: User management tools (wp_create_user, wp_update_user, wp_delete_user)
+* Removed: Customer management tools (wc_get_customers, wc_create_customer, wc_update_customer, wc_delete_customer)
+* Updated: Settings page now guides users to create Application Passwords
+* Improved: Authentication uses native WordPress security features
+
 = 1.0.0 =
 * Initial public release
 * 55 WordPress management tools (posts, pages, comments, media, taxonomies, options)
 * 61 WooCommerce tools (products, orders, coupons, shipping, taxes, webhooks)
 * Profile-based tool management with 8 predefined profiles
-* Token-based authentication with WordPress user mapping
+* WordPress Application Passwords authentication
 * JSON-RPC 2.0 compliant REST API endpoint
 * Server-Sent Events (SSE) support for real-time streaming
 * Full internationalization support (i18n/l10n ready)

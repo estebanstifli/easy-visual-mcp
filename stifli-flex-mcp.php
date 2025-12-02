@@ -776,20 +776,7 @@ function stifli_flex_mcp_activate() {
 	stifli_flex_mcp_sync_tool_token_estimates();
 	stifli_flex_mcp_ensure_clean_queue_event();
 	
-	// Generate security token on first activation (required for API access)
-	$token = get_option('stifli_flex_mcp_token', '');
-	if (empty($token)) {
-		$token = bin2hex(random_bytes(16));
-		update_option('stifli_flex_mcp_token', $token);
-	}
-	
-	// Assign token to first admin user if not set
-	if (get_option('stifli_flex_mcp_token_user', false) === false) {
-		$admin_users = get_users(array('role' => 'administrator', 'orderby' => 'ID', 'order' => 'ASC', 'number' => 1));
-		if (!empty($admin_users)) {
-			update_option('stifli_flex_mcp_token_user', intval($admin_users[0]->ID));
-		}
-	}
+	// Authentication now uses WordPress Application Passwords (no custom token needed)
 }
 
 function stifli_flex_mcp_deactivate() {

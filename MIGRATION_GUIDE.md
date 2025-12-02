@@ -34,10 +34,11 @@ Si tienes el plugin instalado como "Easy Visual MCP", al actualizar:
 1. **Desactivar** el plugin antiguo
 2. **Desinstalar** el plugin antiguo (esto borrará las tablas `wp_evmcp_*`)
 3. **Instalar** la nueva versión "StifLi Flex MCP"
-4. **Reconfigurar**:
-   - Generar nuevo token de autenticación
-   - Reactivar las herramientas necesarias
-   - Aplicar el perfil que desees
+4. **Configurar autenticación**:
+   - Ir a tu perfil de WordPress (Users → Profile)
+   - Crear una Application Password en la sección "Application Passwords"
+   - Guardar el password generado (solo se muestra una vez)
+   - Usar HTTP Basic Authentication con tu usuario y la Application Password
 
 5. **Actualizar integraciones externas**:
    - ChatGPT Custom Connectors
@@ -45,7 +46,31 @@ Si tienes el plugin instalado como "Easy Visual MCP", al actualizar:
    - LibreChat settings
    - Scripts personalizados
 
-   Cambiar la URL del endpoint a: `/wp-json/stifli-flex-mcp/v1/...`
+   Cambiar:
+   - La URL del endpoint a: `/wp-json/stifli-flex-mcp/v1/...`
+   - La autenticación de Bearer token a HTTP Basic (usuario:application_password)
+
+## 🔐 Cambio de Autenticación (v1.0.3)
+
+A partir de la versión 1.0.3, el plugin usa **WordPress Application Passwords** en lugar de tokens propietarios:
+
+### Antes (v1.0.0 - v1.0.2)
+```bash
+curl -X POST 'https://site.com/wp-json/stifli-flex-mcp/v1/messages' \
+  -H 'Authorization: Bearer YOUR_CUSTOM_TOKEN'
+```
+
+### Ahora (v1.0.3+)
+```bash
+curl -X POST 'https://site.com/wp-json/stifli-flex-mcp/v1/messages' \
+  -u 'username:application_password'
+```
+
+**Beneficios:**
+- Método recomendado por WordPress.org
+- Las llamadas API se ejecutan con los permisos del usuario
+- Puedes revocar Application Passwords individualmente
+- Sin necesidad de `wp_set_current_user()` para cambiar contexto de usuario
 
 ## 🚀 Próximos Pasos
 
